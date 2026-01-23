@@ -345,3 +345,44 @@ Learning:
 - Мультивалюта
 - Расширенные долги (платежи/график/проценты)
 - Интеграции банков через API (если возможно)
+
+## Repository Structure
+
+```
+.
+├── backend/
+├── docs/
+├── frontend/
+├── infra/
+└── supabase/
+```
+
+## Local Development
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Backend:
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+## Deploy Overview
+
+- Vercel: frontend
+- Railway: backend
+- Supabase: DB + Storage
+
+## Environment Variables
+
+See [docs/ENV_VARS.md](docs/ENV_VARS.md).
