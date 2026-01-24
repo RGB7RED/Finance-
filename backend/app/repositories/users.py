@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+from typing import Any
+
+from app.integrations.supabase_client import get_supabase_client
+
+
+def upsert_user(
+    telegram_id: int,
+    username: str | None,
+    first_name: str | None,
+    last_name: str | None,
+) -> str:
+    client = get_supabase_client()
+    payload = {
+        "telegram_id": telegram_id,
+        "username": username,
+        "first_name": first_name,
+        "last_name": last_name,
+    }
+    response = (
+        client.table("users")
+        .upsert(payload, on_conflict="telegram_id")
+        .select("id")
+        .execute()
+    )
+
+    data = response.data or []
+    if not data:
+        raise RuntimeError("Failed to upsert user in Supabase")
+
+    return str(data[0]["id"])
+
+
+def get_user_by_id(user_id: str) -> dict[str, Any]:
+    client = get_supabase_client()
+    response = (
+        client.table("users")
+        .select("id, telegram_id, username, first_name")
+        .eq("id", user_id)
+        .single()
+        .execute()
+    )
+
+    if not response.data:
+        raise RuntimeError("User not found in Supabase")
+
+    return response.data
