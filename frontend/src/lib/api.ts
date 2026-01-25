@@ -2,12 +2,19 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
 export const getApiBaseUrl = (): string | undefined => API_BASE_URL;
 
-type ApiError = Error & { status?: number };
+type ApiError = Error & { status?: number; text?: string };
 
-const buildError = (message: string, status?: number): ApiError => {
+const buildError = (
+  message: string,
+  status?: number,
+  text?: string,
+): ApiError => {
   const error = new Error(message) as ApiError;
   if (status) {
     error.status = status;
+  }
+  if (text) {
+    error.text = text;
   }
   return error;
 };
@@ -188,12 +195,32 @@ export const listAccounts = async (
 export const createAccount = async (
   token: string,
   payload: { budget_id: string; name: string; kind: string },
-): Promise<Account> =>
-  requestJson("/accounts", {
-    method: "POST",
-    headers: authHeaders(token),
-    body: JSON.stringify(payload),
-  });
+): Promise<Account> => {
+  if (!API_BASE_URL) {
+    throw buildError("API недоступен");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/accounts`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw buildError("API недоступен");
+  }
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw buildError("Request failed", response.status, responseText);
+  }
+
+  return (await response.json()) as Account;
+};
 
 export const listCategories = async (
   token: string,
@@ -208,12 +235,32 @@ export const listCategories = async (
 export const createCategory = async (
   token: string,
   payload: { budget_id: string; name: string; parent_id?: string | null },
-): Promise<Category> =>
-  requestJson("/categories", {
-    method: "POST",
-    headers: authHeaders(token),
-    body: JSON.stringify(payload),
-  });
+): Promise<Category> => {
+  if (!API_BASE_URL) {
+    throw buildError("API недоступен");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/categories`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw buildError("API недоступен");
+  }
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw buildError("Request failed", response.status, responseText);
+  }
+
+  return (await response.json()) as Category;
+};
 
 export const listTransactions = async (
   token: string,
