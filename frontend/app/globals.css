@@ -1,0 +1,11 @@
+html,
+body {
+  background: var(--tg-theme-bg-color, #ffffff);
+  color: var(--tg-theme-text-color, #000000);
+  margin: 0;
+  padding: 0;
+}
+
+a {
+  color: var(--tg-theme-link-color, #1e88e5);
+}
