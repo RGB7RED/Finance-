@@ -134,17 +134,17 @@ export default function HomePage() {
 
       if (!resolvedToken) {
         const telegramInitData = initDataFromTelegram || getTelegramInitData();
-        const initDataLength = telegramInitData.length;
         if (!telegramInitData) {
           setStatus("unauthorized");
           setAuthErrorDetails({
             authUrl,
             errorCode: "NO_INITDATA",
-            initDataLength,
+            initDataLength: 0,
           });
           setMessage("Ошибка авторизации");
           return;
         }
+        const initDataLength = telegramInitData.length;
 
         try {
           const authResponse = await authTelegram(telegramInitData);
