@@ -5,11 +5,14 @@
 - APP_ENV
 - JWT_SECRET
 - TELEGRAM_BOT_TOKEN
+- MF_TELEGRAM_BOT_TOKEN
 - SUPABASE_URL
 - SUPABASE_ANON_KEY
 - SUPABASE_SERVICE_ROLE_KEY
 - CORS_ORIGINS
 - LOG_LEVEL
+
+Telegram token can be provided via `TELEGRAM_BOT_TOKEN` or `MF_TELEGRAM_BOT_TOKEN` (the backend uses the first configured key).
 
 ### CORS_ORIGINS format
 

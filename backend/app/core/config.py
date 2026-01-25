@@ -1,3 +1,5 @@
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,3 +17,21 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+TELEGRAM_BOT_TOKEN_KEYS = ("TELEGRAM_BOT_TOKEN", "MF_TELEGRAM_BOT_TOKEN")
+
+
+def get_telegram_bot_token() -> str | None:
+    for key in TELEGRAM_BOT_TOKEN_KEYS:
+        value = os.getenv(key)
+        if value:
+            return value
+    return None
+
+
+def get_telegram_bot_token_source() -> str:
+    for key in TELEGRAM_BOT_TOKEN_KEYS:
+        value = os.getenv(key)
+        if value:
+            return key
+    return "none"
