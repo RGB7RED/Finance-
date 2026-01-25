@@ -1,13 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
 
 import {
   type Account,
-  type AuthError,
   type Budget,
   type Category,
-  authTelegram,
   createAccount,
   createCategory,
   ensureDefaultBudgets,
@@ -19,19 +23,11 @@ import {
   listCategories,
 } from "../src/lib/api";
 import { clearToken, getToken, setToken } from "../src/lib/auth";
-import { getTelegramInitData } from "../src/lib/telegram";
+import { supabase } from "../src/lib/supabase";
 
 type Status = "loading" | "unauthorized" | "ready" | "error";
 
 const ACTIVE_BUDGET_STORAGE_KEY = "mf_active_budget_id";
-
-type AuthErrorDetails = {
-  authUrl: string;
-  errorCode: "NO_INITDATA" | "NETWORK" | "HTTP_401" | "HTTP_500" | "UNKNOWN";
-  httpStatus?: number;
-  responseText?: string;
-  initDataLength: number;
-};
 
 type HealthErrorDetails = {
   url: string;
@@ -61,37 +57,72 @@ export default function HomePage() {
   const [accountKind, setAccountKind] = useState("cash");
   const [categoryName, setCategoryName] = useState("");
   const [categoryParent, setCategoryParent] = useState("");
-  const [authErrorDetails, setAuthErrorDetails] =
-    useState<AuthErrorDetails | null>(null);
   const [healthErrorDetails, setHealthErrorDetails] =
     useState<HealthErrorDetails | null>(null);
+  const [email, setEmail] = useState("");
+  const [otp, setOtp] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+
+  const loadDashboard = async (resolvedToken: string) => {
+    setTokenState(resolvedToken);
+
+    try {
+      await ensureDefaultBudgets(resolvedToken);
+    } catch (error) {
+      setStatus("error");
+      setMessage(buildErrorMessage("Не удалось создать бюджеты", error));
+      return;
+    }
+
+    let loadedBudgets: Budget[];
+    try {
+      loadedBudgets = await listBudgets(resolvedToken);
+      setBudgets(loadedBudgets);
+    } catch (error) {
+      setStatus("error");
+      setMessage(buildErrorMessage("Не удалось загрузить бюджеты", error));
+      return;
+    }
+
+    if (!loadedBudgets.length) {
+      setStatus("error");
+      setMessage("Бюджеты не найдены");
+      return;
+    }
+
+    const storedBudgetId = localStorage.getItem(ACTIVE_BUDGET_STORAGE_KEY);
+    const matchedBudget =
+      storedBudgetId &&
+      loadedBudgets.find((budget) => budget.id === storedBudgetId);
+    const nextBudgetId = matchedBudget
+      ? matchedBudget.id
+      : loadedBudgets[0].id;
+    localStorage.setItem(ACTIVE_BUDGET_STORAGE_KEY, nextBudgetId);
+    setActiveBudgetId(nextBudgetId);
+
+    try {
+      const [loadedAccounts, loadedCategories] = await Promise.all([
+        listAccounts(resolvedToken, nextBudgetId),
+        listCategories(resolvedToken, nextBudgetId),
+      ]);
+      setAccounts(loadedAccounts);
+      setCategories(loadedCategories);
+      setStatus("ready");
+    } catch (error) {
+      setStatus("error");
+      setMessage(
+        buildErrorMessage("Не удалось загрузить счета и категории", error),
+      );
+    }
+  };
 
   useEffect(() => {
-    const loadDashboard = async () => {
-      const telegramWindow = window as typeof window & {
-        Telegram?: {
-          WebApp?: {
-            initData?: string;
-            ready?: () => void;
-            expand?: () => void;
-          };
-        };
-      };
-      const telegram = telegramWindow.Telegram?.WebApp;
-      if (telegram) {
-        telegram.ready?.();
-        telegram.expand?.();
-      }
-
-      const initDataFromTelegram =
-        typeof telegram?.initData === "string" ? telegram.initData : "";
+    const bootstrap = async () => {
       const apiBaseUrl = getApiBaseUrl() ?? "";
-      const authUrl = apiBaseUrl ? `${apiBaseUrl}/auth/telegram` : "";
       const healthUrl = apiBaseUrl ? `${apiBaseUrl}/health` : "/health";
 
       setStatus("loading");
       setMessage("");
-      setAuthErrorDetails(null);
       setHealthErrorDetails(null);
 
       if (!apiBaseUrl) {
@@ -133,110 +164,58 @@ export default function HomePage() {
       }
 
       if (!resolvedToken) {
-        const telegramInitData = initDataFromTelegram || getTelegramInitData();
-        if (!telegramInitData) {
-          setStatus("unauthorized");
-          setAuthErrorDetails({
-            authUrl,
-            errorCode: "NO_INITDATA",
-            initDataLength: 0,
-          });
-          setMessage("Ошибка авторизации");
-          return;
-        }
-        const initDataLength = telegramInitData.length;
-
-        try {
-          const authResponse = await authTelegram(telegramInitData);
-          setToken(authResponse.access_token);
-          resolvedToken = authResponse.access_token;
-        } catch (error) {
-          setStatus("error");
-          const authError = error as AuthError;
-          const isNetworkError = authError?.code === "NETWORK_ERROR";
-          const statusCode = authError?.status;
-          let errorCode: AuthErrorDetails["errorCode"] = "UNKNOWN";
-          if (isNetworkError) {
-            errorCode = "NETWORK";
-          } else if (statusCode === 401) {
-            errorCode = "HTTP_401";
-          } else if (statusCode && statusCode >= 500) {
-            errorCode = "HTTP_500";
-          }
-          setAuthErrorDetails({
-            authUrl,
-            errorCode,
-            httpStatus: statusCode,
-            responseText: authError?.text,
-            initDataLength,
-          });
-          setMessage(buildErrorMessage("Ошибка авторизации", error));
-          return;
-        }
-      }
-
-      if (!resolvedToken) {
         setStatus("unauthorized");
-        setMessage("Нет токена авторизации");
         return;
       }
 
-      setTokenState(resolvedToken);
-
-      try {
-        await ensureDefaultBudgets(resolvedToken);
-      } catch (error) {
-        setStatus("error");
-        setMessage(buildErrorMessage("Не удалось создать бюджеты", error));
-        return;
-      }
-
-      let loadedBudgets: Budget[];
-      try {
-        loadedBudgets = await listBudgets(resolvedToken);
-        setBudgets(loadedBudgets);
-      } catch (error) {
-        setStatus("error");
-        setMessage(buildErrorMessage("Не удалось загрузить бюджеты", error));
-        return;
-      }
-
-      if (!loadedBudgets.length) {
-        setStatus("error");
-        setMessage("Бюджеты не найдены");
-        return;
-      }
-
-      const storedBudgetId = localStorage.getItem(ACTIVE_BUDGET_STORAGE_KEY);
-      const matchedBudget =
-        storedBudgetId &&
-        loadedBudgets.find((budget) => budget.id === storedBudgetId);
-      const nextBudgetId = matchedBudget
-        ? matchedBudget.id
-        : loadedBudgets[0].id;
-      localStorage.setItem(ACTIVE_BUDGET_STORAGE_KEY, nextBudgetId);
-      setActiveBudgetId(nextBudgetId);
-
-      try {
-        const [loadedAccounts, loadedCategories] = await Promise.all([
-          listAccounts(resolvedToken, nextBudgetId),
-          listCategories(resolvedToken, nextBudgetId),
-        ]);
-        setAccounts(loadedAccounts);
-        setCategories(loadedCategories);
-        setStatus("ready");
-      } catch (error) {
-        setStatus("error");
-        setMessage(
-          buildErrorMessage("Не удалось загрузить счета и категории", error),
-        );
-      }
+      await loadDashboard(resolvedToken);
     };
 
-    void loadDashboard();
+    void bootstrap();
   }, []);
 
-  const handleLogout = () => {
+  const handleSendOtp = async () => {
+    setMessage("");
+    try {
+      const { error } = await supabase.auth.signInWithOtp({ email });
+      if (error) {
+        throw error;
+      }
+      setOtpSent(true);
+      setMessage("Код отправлен на почту");
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось отправить код", error));
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    setMessage("");
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email,
+        token: otp,
+        type: "email",
+      });
+      if (error) {
+        throw error;
+      }
+      const accessToken = data.session?.access_token;
+      if (!accessToken) {
+        setMessage("Не удалось получить access token");
+        return;
+      }
+      setToken(accessToken);
+      setStatus("loading");
+      await loadDashboard(accessToken);
+      setOtp("");
+      setOtpSent(false);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось подтвердить код", error));
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     clearToken();
     setTokenState(null);
     setStatus("unauthorized");
@@ -245,6 +224,9 @@ export default function HomePage() {
     setActiveBudgetId(null);
     setAccounts([]);
     setCategories([]);
+    setEmail("");
+    setOtp("");
+    setOtpSent(false);
   };
 
   const categoryMap = useMemo(() => {
@@ -348,20 +330,35 @@ export default function HomePage() {
         {status === "unauthorized" && (
           <>
             {message && <p>{message}</p>}
-            {authErrorDetails && (
+            <div>
+              <label>
+                Email:
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  required
+                />
+              </label>
+            </div>
+            <button type="button" onClick={handleSendOtp} disabled={!email}>
+              Отправить код
+            </button>
+            {otpSent && (
               <div>
-                <p>auth_url: {authErrorDetails.authUrl}</p>
-                <p>error_code: {authErrorDetails.errorCode}</p>
-                <p>initData_length: {authErrorDetails.initDataLength}</p>
-                {authErrorDetails.httpStatus !== undefined && (
-                  <p>http_status: {authErrorDetails.httpStatus}</p>
-                )}
-                {authErrorDetails.responseText && (
-                  <p>response_text: {authErrorDetails.responseText}</p>
-                )}
+                <label>
+                  Код:
+                  <input
+                    type="text"
+                    value={otp}
+                    onChange={(event) => setOtp(event.target.value)}
+                  />
+                </label>
+                <button type="button" onClick={handleVerifyOtp} disabled={!otp}>
+                  Подтвердить
+                </button>
               </div>
             )}
-            <p>Откройте в Telegram Mini App</p>
           </>
         )}
         {status === "error" && (
@@ -371,19 +368,6 @@ export default function HomePage() {
               <div>
                 <p>API недоступен</p>
                 <p>url: {healthErrorDetails.url}</p>
-              </div>
-            )}
-            {authErrorDetails && !healthErrorDetails && (
-              <div>
-                <p>auth_url: {authErrorDetails.authUrl}</p>
-                <p>error_code: {authErrorDetails.errorCode}</p>
-                <p>initData_length: {authErrorDetails.initDataLength}</p>
-                {authErrorDetails.httpStatus !== undefined && (
-                  <p>http_status: {authErrorDetails.httpStatus}</p>
-                )}
-                {authErrorDetails.responseText && (
-                  <p>response_text: {authErrorDetails.responseText}</p>
-                )}
               </div>
             )}
           </>

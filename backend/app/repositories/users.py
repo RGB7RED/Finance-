@@ -45,6 +45,24 @@ def upsert_user(
     return str(fallback.data["id"])
 
 
+def ensure_user(user_id: str, email: str | None) -> None:
+    client = get_supabase_client()
+    username = None
+    if email and "@" in email:
+        username = email.split("@", 1)[0]
+
+    payload = {"id": user_id, "username": username}
+    response = (
+        client.table("users")
+        .upsert(payload, on_conflict="id")
+        .select("id")
+        .execute()
+    )
+
+    if not response.data:
+        raise RuntimeError("Failed to upsert user in Supabase")
+
+
 def get_user_by_id(user_id: str) -> dict[str, Any]:
     client = get_supabase_client()
     response = (
