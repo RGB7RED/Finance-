@@ -20,6 +20,12 @@ type Diagnostics = {
   initDataLength: number;
   userId: number | null;
   origin: string;
+  apiBaseUrl: string;
+  healthUrl: string;
+  healthCheck: "ok" | "fail" | "pending";
+  healthErrorType?: "network" | "cors" | "http";
+  healthHttpStatus?: number;
+  healthMessage?: string;
 };
 
 const getErrorMessage = (error: unknown): string => {
@@ -43,6 +49,9 @@ export default function HomePage() {
     initDataLength: 0,
     userId: null,
     origin: "",
+    apiBaseUrl: "",
+    healthUrl: "",
+    healthCheck: "pending",
   });
 
   useEffect(() => {
@@ -66,15 +75,69 @@ export default function HomePage() {
       const initData =
         typeof telegram?.initData === "string" ? telegram.initData : "";
 
+      const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+      const healthUrl = apiBaseUrl ? `${apiBaseUrl}/health` : "";
+
       setDiagnostics({
         tgPresent: Boolean(telegram),
         initDataLength: initData.length,
         userId: telegram?.initDataUnsafe?.user?.id ?? null,
         origin: window.location.origin,
+        apiBaseUrl,
+        healthUrl,
+        healthCheck: "pending",
       });
 
       setStatus("loading");
       setMessage("");
+
+      if (!apiBaseUrl) {
+        setDiagnostics((prev) => ({
+          ...prev,
+          healthCheck: "fail",
+          healthErrorType: "network",
+          healthMessage: "NEXT_PUBLIC_API_BASE_URL не задан",
+        }));
+        setStatus("error");
+        setMessage("NEXT_PUBLIC_API_BASE_URL не задан");
+        return;
+      }
+
+      try {
+        const response = await fetch(healthUrl, { method: "GET" });
+        if (response.ok) {
+          setDiagnostics((prev) => ({
+            ...prev,
+            healthCheck: "ok",
+          }));
+        } else {
+          setDiagnostics((prev) => ({
+            ...prev,
+            healthCheck: "fail",
+            healthErrorType: "http",
+            healthHttpStatus: response.status,
+            healthMessage: response.statusText || "HTTP error",
+          }));
+        }
+      } catch (error) {
+        let errorType: "network" | "cors" = "network";
+        try {
+          if (
+            new URL(apiBaseUrl).origin !== window.location.origin &&
+            error instanceof TypeError
+          ) {
+            errorType = "cors";
+          }
+        } catch {
+          errorType = "network";
+        }
+        setDiagnostics((prev) => ({
+          ...prev,
+          healthCheck: "fail",
+          healthErrorType: errorType,
+          healthMessage: error instanceof Error ? error.message : "Network error",
+        }));
+      }
 
       const token = getToken();
       if (token) {
@@ -155,6 +218,30 @@ export default function HomePage() {
           <li>
             <strong>origin:</strong> {diagnostics.origin || "-"}
           </li>
+          <li>
+            <strong>api_base_url:</strong> {diagnostics.apiBaseUrl || "-"}
+          </li>
+          <li>
+            <strong>health_url:</strong> {diagnostics.healthUrl || "-"}
+          </li>
+          <li>
+            <strong>health_check:</strong> {diagnostics.healthCheck}
+          </li>
+          {diagnostics.healthCheck === "fail" && (
+            <>
+              <li>
+                <strong>error_type:</strong>{" "}
+                {diagnostics.healthErrorType ?? "-"}
+              </li>
+              <li>
+                <strong>http_status:</strong>{" "}
+                {diagnostics.healthHttpStatus ?? "-"}
+              </li>
+              <li>
+                <strong>message:</strong> {diagnostics.healthMessage ?? "-"}
+              </li>
+            </>
+          )}
         </ul>
       </section>
 
