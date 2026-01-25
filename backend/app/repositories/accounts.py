@@ -50,10 +50,23 @@ def create_account(
                 "kind": kind,
             }
         )
-        .select("id, budget_id, name, kind, currency, created_at")
-        .single()
         .execute()
     )
-    if not response.data:
+    data = response.data or []
+    if data:
+        return data[0]
+
+    fallback = (
+        client.table("accounts")
+        .select("id, budget_id, name, kind, currency, created_at")
+        .eq("budget_id", budget_id)
+        .eq("name", name)
+        .eq("kind", kind)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    fallback_data = fallback.data or []
+    if not fallback_data:
         raise RuntimeError("Failed to create account in Supabase")
-    return response.data
+    return fallback_data[0]

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from app.integrations.supabase_client import get_supabase_client
+
+logger = logging.getLogger(__name__)
 
 
 def upsert_user(
@@ -18,18 +21,28 @@ def upsert_user(
         "first_name": first_name,
         "last_name": last_name,
     }
-    response = (
-        client.table("users")
-        .upsert(payload, on_conflict="telegram_id")
-        .select("id")
-        .execute()
-    )
+    response = client.table("users").upsert(
+        payload, on_conflict="telegram_id"
+    ).execute()
 
     data = response.data or []
-    if not data:
+    if data:
+        return str(data[0]["id"])
+
+    logger.warning(
+        "Supabase upsert for users returned no data; falling back to select."
+    )
+    fallback = (
+        client.table("users")
+        .select("id")
+        .eq("telegram_id", telegram_id)
+        .single()
+        .execute()
+    )
+    if not fallback.data:
         raise RuntimeError("Failed to upsert user in Supabase")
 
-    return str(data[0]["id"])
+    return str(fallback.data["id"])
 
 
 def get_user_by_id(user_id: str) -> dict[str, Any]:
