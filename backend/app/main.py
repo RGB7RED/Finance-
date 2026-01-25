@@ -4,7 +4,11 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
-from app.core.config import settings
+from app.core.config import (
+    get_telegram_bot_token,
+    get_telegram_bot_token_source,
+    settings,
+)
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
@@ -33,6 +37,15 @@ def log_cors_settings() -> None:
         "CORS origins configured: %s (raw CORS_ORIGINS=%s)",
         cors_origins,
         settings.CORS_ORIGINS,
+    )
+    telegram_token = get_telegram_bot_token()
+    telegram_token_source = get_telegram_bot_token_source()
+    telegram_token_length = len(telegram_token) if telegram_token else 0
+    logger.info(
+        "telegram_token_configured=%s telegram_token_source=%s telegram_token_length=%s",
+        bool(telegram_token),
+        telegram_token_source,
+        telegram_token_length,
     )
 
 

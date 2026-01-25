@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from app.auth.jwt import create_access_token, get_current_user
 from app.auth.telegram import verify_init_data
-from app.core.config import settings
+from app.core.config import get_telegram_bot_token, settings
 from app.repositories.accounts import create_account, list_accounts
 from app.repositories.budgets import ensure_default_budgets, list_budgets
 from app.repositories.categories import create_category, list_categories
@@ -34,7 +34,8 @@ class CategoryCreateRequest(BaseModel):
 
 @router.post("/auth/telegram")
 def auth_telegram(payload: TelegramAuthRequest) -> dict[str, str]:
-    if not settings.TELEGRAM_BOT_TOKEN:
+    telegram_token = get_telegram_bot_token()
+    if not telegram_token:
         logger.error("TELEGRAM_BOT_TOKEN is not configured")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -42,7 +43,7 @@ def auth_telegram(payload: TelegramAuthRequest) -> dict[str, str]:
         )
 
     try:
-        telegram_user = verify_init_data(payload.initData, settings.TELEGRAM_BOT_TOKEN)
+        telegram_user = verify_init_data(payload.initData, telegram_token)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
