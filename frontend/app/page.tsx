@@ -102,6 +102,12 @@ export default function HomePage() {
     useState<FormErrorDetails | null>(null);
   const [categoryErrorDetails, setCategoryErrorDetails] =
     useState<FormErrorDetails | null>(null);
+  const [incomeErrorDetails, setIncomeErrorDetails] =
+    useState<FormErrorDetails | null>(null);
+  const [expenseErrorDetails, setExpenseErrorDetails] =
+    useState<FormErrorDetails | null>(null);
+  const [transferErrorDetails, setTransferErrorDetails] =
+    useState<FormErrorDetails | null>(null);
 
   useEffect(() => {
     const loadDashboard = async () => {
@@ -441,7 +447,7 @@ export default function HomePage() {
     if (!token || !activeBudgetId) {
       return;
     }
-    const amount = Number(incomeAmount);
+    const amount = Number.parseInt(incomeAmount, 10);
     if (!incomeAccountId) {
       setMessage("Выберите счет");
       return;
@@ -451,6 +457,7 @@ export default function HomePage() {
       return;
     }
     setMessage("");
+    setIncomeErrorDetails(null);
     try {
       await createTransaction(token, {
         budget_id: activeBudgetId,
@@ -470,6 +477,11 @@ export default function HomePage() {
       );
       setTransactions(updatedTransactions);
     } catch (error) {
+      const apiError = error as Error & { status?: number; text?: string };
+      setIncomeErrorDetails({
+        httpStatus: apiError.status,
+        responseText: apiError.text,
+      });
       setMessage(buildErrorMessage("Не удалось добавить доход", error));
     }
   };
@@ -479,7 +491,7 @@ export default function HomePage() {
     if (!token || !activeBudgetId) {
       return;
     }
-    const amount = Number(expenseAmount);
+    const amount = Number.parseInt(expenseAmount, 10);
     if (!expenseAccountId) {
       setMessage("Выберите счет");
       return;
@@ -489,6 +501,7 @@ export default function HomePage() {
       return;
     }
     setMessage("");
+    setExpenseErrorDetails(null);
     const categoryId = expenseCategoryId ? expenseCategoryId : null;
     try {
       await createTransaction(token, {
@@ -510,6 +523,11 @@ export default function HomePage() {
       );
       setTransactions(updatedTransactions);
     } catch (error) {
+      const apiError = error as Error & { status?: number; text?: string };
+      setExpenseErrorDetails({
+        httpStatus: apiError.status,
+        responseText: apiError.text,
+      });
       setMessage(buildErrorMessage("Не удалось добавить расход", error));
     }
   };
@@ -519,7 +537,7 @@ export default function HomePage() {
     if (!token || !activeBudgetId) {
       return;
     }
-    const amount = Number(transferAmount);
+    const amount = Number.parseInt(transferAmount, 10);
     if (!transferFromAccountId || !transferToAccountId) {
       setMessage("Выберите счета");
       return;
@@ -533,6 +551,7 @@ export default function HomePage() {
       return;
     }
     setMessage("");
+    setTransferErrorDetails(null);
     try {
       await createTransaction(token, {
         budget_id: activeBudgetId,
@@ -553,6 +572,11 @@ export default function HomePage() {
       );
       setTransactions(updatedTransactions);
     } catch (error) {
+      const apiError = error as Error & { status?: number; text?: string };
+      setTransferErrorDetails({
+        httpStatus: apiError.status,
+        responseText: apiError.text,
+      });
       setMessage(buildErrorMessage("Не удалось добавить перевод", error));
     }
   };
@@ -762,6 +786,17 @@ export default function HomePage() {
               </label>
               <button type="submit">Добавить</button>
             </form>
+            {incomeErrorDetails && (
+              <div>
+                <p>
+                  tx_http_status: {incomeErrorDetails.httpStatus ?? "unknown"}
+                </p>
+                <p>
+                  tx_response_text:{" "}
+                  {incomeErrorDetails.responseText ?? "unknown"}
+                </p>
+              </div>
+            )}
           </section>
 
           <section>
@@ -830,6 +865,17 @@ export default function HomePage() {
               </label>
               <button type="submit">Добавить</button>
             </form>
+            {expenseErrorDetails && (
+              <div>
+                <p>
+                  tx_http_status: {expenseErrorDetails.httpStatus ?? "unknown"}
+                </p>
+                <p>
+                  tx_response_text:{" "}
+                  {expenseErrorDetails.responseText ?? "unknown"}
+                </p>
+              </div>
+            )}
           </section>
 
           <section>
@@ -889,6 +935,17 @@ export default function HomePage() {
               </label>
               <button type="submit">Добавить</button>
             </form>
+            {transferErrorDetails && (
+              <div>
+                <p>
+                  tx_http_status: {transferErrorDetails.httpStatus ?? "unknown"}
+                </p>
+                <p>
+                  tx_response_text:{" "}
+                  {transferErrorDetails.responseText ?? "unknown"}
+                </p>
+              </div>
+            )}
           </section>
 
           <section>

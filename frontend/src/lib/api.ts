@@ -286,12 +286,32 @@ export const createTransaction = async (
     tag: "one_time" | "subscription";
     note?: string | null;
   },
-): Promise<Transaction> =>
-  requestJson("/transactions", {
-    method: "POST",
-    headers: authHeaders(token),
-    body: JSON.stringify(payload),
-  });
+): Promise<Transaction> => {
+  if (!API_BASE_URL) {
+    throw buildError("API недоступен");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/transactions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw buildError("API недоступен");
+  }
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw buildError("Request failed", response.status, responseText);
+  }
+
+  return (await response.json()) as Transaction;
+};
 
 export const deleteTransaction = async (
   token: string,
