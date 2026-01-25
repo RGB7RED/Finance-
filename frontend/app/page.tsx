@@ -4,12 +4,14 @@ import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "
 
 import {
   type Account,
+  type AuthError,
   type Budget,
   type Category,
   authTelegram,
   createAccount,
   createCategory,
   ensureDefaultBudgets,
+  getApiBaseUrl,
   getMe,
   isUnauthorized,
   listAccounts,
@@ -22,6 +24,18 @@ import { getTelegramInitData } from "../src/lib/telegram";
 type Status = "loading" | "unauthorized" | "ready" | "error";
 
 const ACTIVE_BUDGET_STORAGE_KEY = "mf_active_budget_id";
+
+type AuthErrorDetails = {
+  authUrl: string;
+  errorCode: "NO_INITDATA" | "NETWORK" | "HTTP_401" | "HTTP_500" | "UNKNOWN";
+  httpStatus?: number;
+  responseText?: string;
+  initDataLength: number;
+};
+
+type HealthErrorDetails = {
+  url: string;
+};
 
 const buildErrorMessage = (fallback: string, error: unknown): string => {
   if (isUnauthorized(error)) {
@@ -47,6 +61,10 @@ export default function HomePage() {
   const [accountKind, setAccountKind] = useState("cash");
   const [categoryName, setCategoryName] = useState("");
   const [categoryParent, setCategoryParent] = useState("");
+  const [authErrorDetails, setAuthErrorDetails] =
+    useState<AuthErrorDetails | null>(null);
+  const [healthErrorDetails, setHealthErrorDetails] =
+    useState<HealthErrorDetails | null>(null);
 
   useEffect(() => {
     const loadDashboard = async () => {
@@ -65,11 +83,38 @@ export default function HomePage() {
         telegram.expand?.();
       }
 
-      const initData =
+      const initDataFromTelegram =
         typeof telegram?.initData === "string" ? telegram.initData : "";
+      const apiBaseUrl = getApiBaseUrl() ?? "";
+      const authUrl = apiBaseUrl ? `${apiBaseUrl}/auth/telegram` : "";
+      const healthUrl = apiBaseUrl ? `${apiBaseUrl}/health` : "/health";
 
       setStatus("loading");
       setMessage("");
+      setAuthErrorDetails(null);
+      setHealthErrorDetails(null);
+
+      if (!apiBaseUrl) {
+        setStatus("error");
+        setHealthErrorDetails({ url: "/health" });
+        setMessage("API недоступен");
+        return;
+      }
+
+      try {
+        const healthResponse = await fetch(healthUrl);
+        if (!healthResponse.ok) {
+          setStatus("error");
+          setHealthErrorDetails({ url: healthUrl });
+          setMessage("API недоступен");
+          return;
+        }
+      } catch (error) {
+        setStatus("error");
+        setHealthErrorDetails({ url: healthUrl });
+        setMessage("API недоступен");
+        return;
+      }
 
       let resolvedToken = getToken();
       if (resolvedToken) {
@@ -88,10 +133,16 @@ export default function HomePage() {
       }
 
       if (!resolvedToken) {
-        const telegramInitData = initData || getTelegramInitData();
+        const telegramInitData = initDataFromTelegram || getTelegramInitData();
+        const initDataLength = telegramInitData.length;
         if (!telegramInitData) {
           setStatus("unauthorized");
-          setMessage("Нет initData");
+          setAuthErrorDetails({
+            authUrl,
+            errorCode: "NO_INITDATA",
+            initDataLength,
+          });
+          setMessage("Ошибка авторизации");
           return;
         }
 
@@ -101,7 +152,25 @@ export default function HomePage() {
           resolvedToken = authResponse.access_token;
         } catch (error) {
           setStatus("error");
-          setMessage(buildErrorMessage("Не удалось выполнить авторизацию", error));
+          const authError = error as AuthError;
+          const isNetworkError = authError?.code === "NETWORK_ERROR";
+          const statusCode = authError?.status;
+          let errorCode: AuthErrorDetails["errorCode"] = "UNKNOWN";
+          if (isNetworkError) {
+            errorCode = "NETWORK";
+          } else if (statusCode === 401) {
+            errorCode = "HTTP_401";
+          } else if (statusCode && statusCode >= 500) {
+            errorCode = "HTTP_500";
+          }
+          setAuthErrorDetails({
+            authUrl,
+            errorCode,
+            httpStatus: statusCode,
+            responseText: authError?.text,
+            initDataLength,
+          });
+          setMessage(buildErrorMessage("Ошибка авторизации", error));
           return;
         }
       }
@@ -279,10 +348,46 @@ export default function HomePage() {
         {status === "unauthorized" && (
           <>
             {message && <p>{message}</p>}
+            {authErrorDetails && (
+              <div>
+                <p>auth_url: {authErrorDetails.authUrl}</p>
+                <p>error_code: {authErrorDetails.errorCode}</p>
+                <p>initData_length: {authErrorDetails.initDataLength}</p>
+                {authErrorDetails.httpStatus !== undefined && (
+                  <p>http_status: {authErrorDetails.httpStatus}</p>
+                )}
+                {authErrorDetails.responseText && (
+                  <p>response_text: {authErrorDetails.responseText}</p>
+                )}
+              </div>
+            )}
             <p>Откройте в Telegram Mini App</p>
           </>
         )}
-        {status === "error" && message && <p>{message}</p>}
+        {status === "error" && (
+          <>
+            {message && <p>{message}</p>}
+            {healthErrorDetails && (
+              <div>
+                <p>API недоступен</p>
+                <p>url: {healthErrorDetails.url}</p>
+              </div>
+            )}
+            {authErrorDetails && !healthErrorDetails && (
+              <div>
+                <p>auth_url: {authErrorDetails.authUrl}</p>
+                <p>error_code: {authErrorDetails.errorCode}</p>
+                <p>initData_length: {authErrorDetails.initDataLength}</p>
+                {authErrorDetails.httpStatus !== undefined && (
+                  <p>http_status: {authErrorDetails.httpStatus}</p>
+                )}
+                {authErrorDetails.responseText && (
+                  <p>response_text: {authErrorDetails.responseText}</p>
+                )}
+              </div>
+            )}
+          </>
+        )}
         {status === "ready" && message && <p>{message}</p>}
       </section>
 
