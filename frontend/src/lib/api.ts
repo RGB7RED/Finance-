@@ -62,3 +62,84 @@ export const getMe = async (
 
 export const isUnauthorized = (error: unknown): boolean =>
   Boolean((error as ApiError | undefined)?.status === 401);
+
+export type Budget = {
+  id: string;
+  user_id: string;
+  type: "personal" | "business" | string;
+  name: string;
+  created_at: string;
+};
+
+export type Account = {
+  id: string;
+  budget_id: string;
+  name: string;
+  kind: string;
+  currency: string | null;
+  created_at: string;
+};
+
+export type Category = {
+  id: string;
+  budget_id: string;
+  name: string;
+  parent_id: string | null;
+  created_at: string;
+};
+
+const authHeaders = (token: string) => ({
+  Authorization: `Bearer ${token}`,
+});
+
+export const ensureDefaultBudgets = async (token: string): Promise<void> => {
+  await requestJson("/budgets/ensure-defaults", {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+};
+
+export const listBudgets = async (token: string): Promise<Budget[]> =>
+  requestJson("/budgets", {
+    headers: authHeaders(token),
+  });
+
+export const listAccounts = async (
+  token: string,
+  budgetId: string,
+): Promise<Account[]> => {
+  const query = new URLSearchParams({ budget_id: budgetId });
+  return requestJson(`/accounts?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const createAccount = async (
+  token: string,
+  payload: { budget_id: string; name: string; kind: string },
+): Promise<Account> =>
+  requestJson("/accounts", {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  });
+
+export const listCategories = async (
+  token: string,
+  budgetId: string,
+): Promise<Category[]> => {
+  const query = new URLSearchParams({ budget_id: budgetId });
+  return requestJson(`/categories?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const createCategory = async (
+  token: string,
+  payload: { budget_id: string; name: string; parent_id?: string | null },
+): Promise<Category> =>
+  requestJson("/categories", {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  });
