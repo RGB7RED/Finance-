@@ -11,6 +11,14 @@
 - CORS_ORIGINS
 - LOG_LEVEL
 
+### CORS_ORIGINS format
+
+- Use `*` to allow all origins.
+- Or provide a comma-separated list of domains (no spaces required).
+- Examples:
+  - `https://finance-rosy-seven-27.vercel.app`
+  - `https://a.vercel.app,https://b.vercel.app`
+
 ## Vercel (frontend)
 
 - NEXT_PUBLIC_API_BASE_URL
