@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -131,6 +132,10 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid transaction type",
         )
+
+    tx_date = payload.get("date")
+    if isinstance(tx_date, (date, datetime)):
+        payload = {**payload, "date": tx_date.isoformat()}
 
     client = get_supabase_client()
     response = (
