@@ -11,6 +11,7 @@ from app.core.config import get_telegram_bot_token, settings
 from app.repositories.accounts import create_account, list_accounts
 from app.repositories.budgets import ensure_default_budgets, list_budgets
 from app.repositories.categories import create_category, list_categories
+from app.repositories.daily_state import get_delta, get_or_create, upsert
 from app.repositories.transactions import (
     create_transaction,
     delete_transaction,
@@ -64,6 +65,28 @@ class TransactionOut(BaseModel):
     tag: Literal["one_time", "subscription"]
     note: str | None = None
     created_at: str
+
+
+class DailyStateUpdate(BaseModel):
+    budget_id: str
+    date: date
+    cash_total: int | None = Field(default=None, ge=0)
+    bank_total: int | None = Field(default=None, ge=0)
+    debt_cards_total: int | None = Field(default=None, ge=0)
+    debt_other_total: int | None = Field(default=None, ge=0)
+
+
+class DailyStateOut(BaseModel):
+    budget_id: str
+    user_id: str
+    date: date
+    cash_total: int
+    bank_total: int
+    debt_cards_total: int
+    debt_other_total: int
+    assets_total: int
+    debts_total: int
+    balance: int
 
 
 @router.post("/auth/telegram")
@@ -172,3 +195,37 @@ def delete_transactions(
 ) -> dict[str, str]:
     delete_transaction(current_user["sub"], tx_id)
     return {"status": "deleted"}
+
+
+@router.get("/daily-state")
+def get_daily_state(
+    budget_id: str,
+    date: date,
+    current_user: dict = Depends(get_current_user),
+) -> DailyStateOut:
+    record = get_or_create(current_user["sub"], budget_id, date)
+    return DailyStateOut(**record)
+
+
+@router.put("/daily-state")
+def put_daily_state(
+    payload: DailyStateUpdate, current_user: dict = Depends(get_current_user)
+) -> DailyStateOut:
+    fields = payload.model_dump(exclude={"budget_id", "date"}, exclude_none=True)
+    record = upsert(
+        current_user["sub"],
+        payload.budget_id,
+        payload.date,
+        fields,
+    )
+    return DailyStateOut(**record)
+
+
+@router.get("/daily-state/delta")
+def get_daily_delta(
+    budget_id: str,
+    date: date,
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, int]:
+    delta = get_delta(current_user["sub"], budget_id, date)
+    return {"top_day_total": delta}
