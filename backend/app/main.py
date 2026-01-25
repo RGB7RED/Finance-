@@ -1,7 +1,9 @@
 import logging
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from postgrest.exceptions import APIError
 
 from app.api.routes import router
 from app.core.config import (
@@ -9,6 +11,7 @@ from app.core.config import (
     get_telegram_bot_token_source,
     settings,
 )
+from app.integrations.supabase_client import get_supabase_client
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
@@ -31,6 +34,38 @@ app.add_middleware(
     allow_credentials=False,
 )
 
+
+def _supabase_project_ref(url: str | None) -> str:
+    if not url:
+        return "missing"
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    if not hostname:
+        return "unknown"
+    return hostname.split(".")[0]
+
+
+def _log_supabase_startup_checks() -> None:
+    project_ref = _supabase_project_ref(settings.SUPABASE_URL)
+    logger.info("APP_ENV=%s supabase_project_ref=%s", settings.APP_ENV, project_ref)
+
+    try:
+        client = get_supabase_client()
+        response = client.table("transactions").select("id").limit(1).execute()
+        row_count = len(response.data or [])
+        logger.info("supabase_schema_check=ok rows=%s", row_count)
+    except APIError as exc:
+        code = getattr(exc, "code", None)
+        message = getattr(exc, "message", None) or str(exc)
+        logger.error(
+            "supabase_schema_check=error code=%s message=%s",
+            code,
+            message,
+        )
+    except Exception:
+        logger.exception("supabase_schema_check=error unexpected")
+
+
 @app.on_event("startup")
 def log_cors_settings() -> None:
     logger.info(
@@ -47,6 +82,7 @@ def log_cors_settings() -> None:
         telegram_token_source,
         telegram_token_length,
     )
+    _log_supabase_startup_checks()
 
 
 @app.options("/{path:path}")
