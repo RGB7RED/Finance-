@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.repositories.accounts import create_account, list_accounts
 from app.repositories.budgets import ensure_default_budgets, list_budgets
 from app.repositories.categories import create_category, list_categories
-from app.repositories.users import get_user_by_id, upsert_user
+from app.repositories.users import upsert_user
 
 logger = logging.getLogger(__name__)
 
@@ -61,33 +61,30 @@ def auth_telegram(payload: TelegramAuthRequest) -> dict[str, str]:
 
 
 @router.get("/me")
-def get_me(current_user: dict = Depends(get_current_user)) -> dict[str, str | int]:
-    user = get_user_by_id(current_user["sub"])
+def get_me(current_user: dict = Depends(get_current_user)) -> dict[str, str | None]:
     return {
-        "user_id": user["id"],
-        "telegram_id": user["telegram_id"],
-        "username": user.get("username"),
-        "first_name": user.get("first_name"),
+        "user_id": current_user["user_id"],
+        "email": current_user.get("email"),
     }
 
 
 @router.get("/budgets")
 def get_budgets(current_user: dict = Depends(get_current_user)) -> list[dict]:
-    return list_budgets(current_user["sub"])
+    return list_budgets(current_user["user_id"])
 
 
 @router.post("/budgets/ensure-defaults")
 def post_budgets_defaults(
     current_user: dict = Depends(get_current_user),
 ) -> list[dict]:
-    return ensure_default_budgets(current_user["sub"])
+    return ensure_default_budgets(current_user["user_id"])
 
 
 @router.get("/accounts")
 def get_accounts(
     budget_id: str, current_user: dict = Depends(get_current_user)
 ) -> list[dict]:
-    return list_accounts(current_user["sub"], budget_id)
+    return list_accounts(current_user["user_id"], budget_id)
 
 
 @router.post("/accounts")
@@ -95,7 +92,7 @@ def post_accounts(
     payload: AccountCreateRequest, current_user: dict = Depends(get_current_user)
 ) -> dict:
     return create_account(
-        current_user["sub"], payload.budget_id, payload.name, payload.kind
+        current_user["user_id"], payload.budget_id, payload.name, payload.kind
     )
 
 
@@ -103,7 +100,7 @@ def post_accounts(
 def get_categories(
     budget_id: str, current_user: dict = Depends(get_current_user)
 ) -> list[dict]:
-    return list_categories(current_user["sub"], budget_id)
+    return list_categories(current_user["user_id"], budget_id)
 
 
 @router.post("/categories")
@@ -111,5 +108,5 @@ def post_categories(
     payload: CategoryCreateRequest, current_user: dict = Depends(get_current_user)
 ) -> dict:
     return create_category(
-        current_user["sub"], payload.budget_id, payload.name, payload.parent_id
+        current_user["user_id"], payload.budget_id, payload.name, payload.parent_id
     )

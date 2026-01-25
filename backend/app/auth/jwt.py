@@ -7,6 +7,8 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import settings
+from app.auth.supabase_auth import get_supabase_user
+from app.repositories.users import ensure_user
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -41,4 +43,14 @@ def get_current_user(
             detail="Not authenticated",
         )
 
-    return verify_access_token(credentials.credentials)
+    supabase_user = get_supabase_user(credentials.credentials)
+    user_id = supabase_user.get("id")
+    email = supabase_user.get("email")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+        )
+
+    ensure_user(user_id, email)
+    return {"user_id": user_id, "email": email}
