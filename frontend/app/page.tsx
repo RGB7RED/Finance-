@@ -47,6 +47,11 @@ type HealthErrorDetails = {
   url: string;
 };
 
+type FormErrorDetails = {
+  httpStatus?: number;
+  responseText?: string;
+};
+
 const buildErrorMessage = (fallback: string, error: unknown): string => {
   if (isUnauthorized(error)) {
     return "Сессия истекла, войдите заново";
@@ -93,6 +98,10 @@ export default function HomePage() {
     useState<AuthErrorDetails | null>(null);
   const [healthErrorDetails, setHealthErrorDetails] =
     useState<HealthErrorDetails | null>(null);
+  const [accountErrorDetails, setAccountErrorDetails] =
+    useState<FormErrorDetails | null>(null);
+  const [categoryErrorDetails, setCategoryErrorDetails] =
+    useState<FormErrorDetails | null>(null);
 
   useEffect(() => {
     const loadDashboard = async () => {
@@ -379,6 +388,7 @@ export default function HomePage() {
       return;
     }
     setMessage("");
+    setAccountErrorDetails(null);
     try {
       await createAccount(token, {
         budget_id: activeBudgetId,
@@ -389,6 +399,11 @@ export default function HomePage() {
       const updatedAccounts = await listAccounts(token, activeBudgetId);
       setAccounts(updatedAccounts);
     } catch (error) {
+      const apiError = error as Error & { status?: number; text?: string };
+      setAccountErrorDetails({
+        httpStatus: apiError.status,
+        responseText: apiError.text,
+      });
       setMessage(buildErrorMessage("Не удалось добавить счет", error));
     }
   };
@@ -399,6 +414,7 @@ export default function HomePage() {
       return;
     }
     setMessage("");
+    setCategoryErrorDetails(null);
     const parentId = categoryParent ? categoryParent : null;
     try {
       await createCategory(token, {
@@ -411,6 +427,11 @@ export default function HomePage() {
       const updatedCategories = await listCategories(token, activeBudgetId);
       setCategories(updatedCategories);
     } catch (error) {
+      const apiError = error as Error & { status?: number; text?: string };
+      setCategoryErrorDetails({
+        httpStatus: apiError.status,
+        responseText: apiError.text,
+      });
       setMessage(buildErrorMessage("Не удалось добавить категорию", error));
     }
   };
@@ -894,6 +915,16 @@ export default function HomePage() {
               </label>
               <button type="submit">Добавить</button>
             </form>
+            {accountErrorDetails && (
+              <div>
+                <p>
+                  http_status: {accountErrorDetails.httpStatus ?? "unknown"}
+                </p>
+                <p>
+                  response_text: {accountErrorDetails.responseText ?? "unknown"}
+                </p>
+              </div>
+            )}
           </section>
 
           <section>
@@ -924,6 +955,16 @@ export default function HomePage() {
               </label>
               <button type="submit">Добавить</button>
             </form>
+            {categoryErrorDetails && (
+              <div>
+                <p>
+                  http_status: {categoryErrorDetails.httpStatus ?? "unknown"}
+                </p>
+                <p>
+                  response_text: {categoryErrorDetails.responseText ?? "unknown"}
+                </p>
+              </div>
+            )}
           </section>
 
           <section>
