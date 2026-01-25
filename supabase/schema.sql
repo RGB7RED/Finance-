@@ -37,3 +37,33 @@ create table if not exists public.categories (
     created_at timestamptz not null default now(),
     unique (budget_id, name, parent_id)
 );
+
+create table if not exists public.transactions (
+    id uuid primary key default gen_random_uuid(),
+    budget_id uuid not null references public.budgets(id) on delete cascade,
+    user_id uuid not null references public.users(id) on delete cascade,
+    date date not null,
+    type text not null check (type in ('income', 'expense', 'transfer')),
+    amount integer not null check (amount > 0),
+    account_id uuid null references public.accounts(id) on delete cascade,
+    to_account_id uuid null references public.accounts(id) on delete cascade,
+    category_id uuid null references public.categories(id) on delete set null,
+    tag text not null check (tag in ('one_time', 'subscription')),
+    note text null,
+    created_at timestamptz not null default now(),
+    check (
+        (
+            type in ('income', 'expense')
+            and account_id is not null
+            and to_account_id is null
+        )
+        or (
+            type = 'transfer'
+            and account_id is not null
+            and to_account_id is not null
+            and account_id <> to_account_id
+        )
+    ),
+    check ((type = 'income' and category_id is null) or type <> 'income'),
+    check ((type = 'transfer' and category_id is null) or type <> 'transfer')
+);
