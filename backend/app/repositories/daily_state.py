@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from fastapi import HTTPException, status
+from postgrest.exceptions import APIError
 
 from app.integrations.supabase_client import get_supabase_client
 
@@ -67,7 +68,14 @@ def get_or_create(
         "user_id": user_id,
         "date": target_date.isoformat(),
     }
-    inserted = client.table("daily_state").insert(insert_payload).execute()
+    try:
+        inserted = client.table("daily_state").insert(insert_payload).execute()
+    except APIError as exc:
+        detail = getattr(exc, "message", None) or str(exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail,
+        ) from exc
     data = inserted.data or []
     if not data:
         raise RuntimeError("Failed to create daily state")
@@ -89,11 +97,18 @@ def upsert(
         **fields,
     }
     client = get_supabase_client()
-    response = (
-        client.table("daily_state")
-        .upsert(payload, on_conflict="budget_id,date")
-        .execute()
-    )
+    try:
+        response = (
+            client.table("daily_state")
+            .upsert(payload, on_conflict="budget_id,date")
+            .execute()
+        )
+    except APIError as exc:
+        detail = getattr(exc, "message", None) or str(exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail,
+        ) from exc
     data = response.data or []
     if not data:
         raise RuntimeError("Failed to update daily state")

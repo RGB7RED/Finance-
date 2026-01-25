@@ -211,7 +211,9 @@ def get_daily_state(
 def put_daily_state(
     payload: DailyStateUpdate, current_user: dict = Depends(get_current_user)
 ) -> DailyStateOut:
-    fields = payload.model_dump(exclude={"budget_id", "date"}, exclude_none=True)
+    fields = payload.model_dump(
+        mode="json", exclude={"budget_id", "date"}, exclude_none=True
+    )
     record = upsert(
         current_user["sub"],
         payload.budget_id,

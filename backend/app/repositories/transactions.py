@@ -4,6 +4,7 @@ from datetime import date, datetime
 from typing import Any
 
 from fastapi import HTTPException, status
+from postgrest.exceptions import APIError
 
 from app.integrations.supabase_client import get_supabase_client
 
@@ -138,11 +139,18 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         payload = {**payload, "date": tx_date.isoformat()}
 
     client = get_supabase_client()
-    response = (
-        client.table("transactions")
-        .insert({**payload, "user_id": user_id})
-        .execute()
-    )
+    try:
+        response = (
+            client.table("transactions")
+            .insert({**payload, "user_id": user_id})
+            .execute()
+        )
+    except APIError as exc:
+        detail = getattr(exc, "message", None) or str(exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail,
+        ) from exc
     data = response.data or []
     if data:
         return data[0]
