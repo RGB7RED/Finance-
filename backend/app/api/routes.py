@@ -163,7 +163,7 @@ def get_transactions(
 def post_transactions(
     payload: TransactionCreate, current_user: dict = Depends(get_current_user)
 ) -> TransactionOut:
-    return create_transaction(current_user["sub"], payload.model_dump())
+    return create_transaction(current_user["sub"], payload.model_dump(mode="json"))
 
 
 @router.delete("/transactions/{tx_id}")
