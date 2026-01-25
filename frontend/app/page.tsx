@@ -15,6 +15,13 @@ type Profile = {
   first_name?: string;
 };
 
+type Diagnostics = {
+  tgPresent: boolean;
+  initDataLength: number;
+  userId: number | null;
+  origin: string;
+};
+
 const getErrorMessage = (error: unknown): string => {
   if (isUnauthorized(error)) {
     return "Auth failed";
@@ -31,9 +38,41 @@ export default function HomePage() {
   const [status, setStatus] = useState<Status>("loading");
   const [profile, setProfile] = useState<Profile | null>(null);
   const [message, setMessage] = useState<string>("");
+  const [diagnostics, setDiagnostics] = useState<Diagnostics>({
+    tgPresent: false,
+    initDataLength: 0,
+    userId: null,
+    origin: "",
+  });
 
   useEffect(() => {
     const loadProfile = async () => {
+      const telegramWindow = window as typeof window & {
+        Telegram?: {
+          WebApp?: {
+            initData?: string;
+            initDataUnsafe?: { user?: { id?: number } };
+            ready?: () => void;
+            expand?: () => void;
+          };
+        };
+      };
+      const telegram = telegramWindow.Telegram?.WebApp;
+      if (telegram) {
+        telegram.ready?.();
+        telegram.expand?.();
+      }
+
+      const initData =
+        typeof telegram?.initData === "string" ? telegram.initData : "";
+
+      setDiagnostics({
+        tgPresent: Boolean(telegram),
+        initDataLength: initData.length,
+        userId: telegram?.initDataUnsafe?.user?.id ?? null,
+        origin: window.location.origin,
+      });
+
       setStatus("loading");
       setMessage("");
 
@@ -55,15 +94,15 @@ export default function HomePage() {
         }
       }
 
-      const initData = getTelegramInitData();
-      if (!initData) {
+      const telegramInitData = initData || getTelegramInitData();
+      if (!telegramInitData) {
         setStatus("unauthorized");
         setMessage("Нет initData");
         return;
       }
 
       try {
-        const authResponse = await authTelegram(initData);
+        const authResponse = await authTelegram(telegramInitData);
         setToken(authResponse.access_token);
 
         const me = await getMe(authResponse.access_token);
@@ -99,6 +138,24 @@ export default function HomePage() {
           </>
         )}
         {status === "error" && message && <p>{message}</p>}
+      </section>
+
+      <section>
+        <h2>Диагностика</h2>
+        <ul>
+          <li>
+            <strong>tg_present:</strong> {String(diagnostics.tgPresent)}
+          </li>
+          <li>
+            <strong>initData_length:</strong> {diagnostics.initDataLength}
+          </li>
+          <li>
+            <strong>user_id:</strong> {diagnostics.userId ?? "-"}
+          </li>
+          <li>
+            <strong>origin:</strong> {diagnostics.origin || "-"}
+          </li>
+        </ul>
       </section>
 
       {status === "authorized" && profile && (
