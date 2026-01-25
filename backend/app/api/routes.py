@@ -1,7 +1,9 @@
 import logging
+from datetime import date
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.auth.jwt import create_access_token, get_current_user
 from app.auth.telegram import verify_init_data
@@ -9,6 +11,11 @@ from app.core.config import get_telegram_bot_token, settings
 from app.repositories.accounts import create_account, list_accounts
 from app.repositories.budgets import ensure_default_budgets, list_budgets
 from app.repositories.categories import create_category, list_categories
+from app.repositories.transactions import (
+    create_transaction,
+    delete_transaction,
+    list_transactions,
+)
 from app.repositories.users import get_user_by_id, upsert_user
 
 logger = logging.getLogger(__name__)
@@ -30,6 +37,33 @@ class CategoryCreateRequest(BaseModel):
     budget_id: str
     name: str
     parent_id: str | None = None
+
+
+class TransactionCreate(BaseModel):
+    budget_id: str
+    type: Literal["income", "expense", "transfer"]
+    amount: int = Field(gt=0)
+    date: date
+    account_id: str | None = None
+    to_account_id: str | None = None
+    category_id: str | None = None
+    tag: Literal["one_time", "subscription"]
+    note: str | None = None
+
+
+class TransactionOut(BaseModel):
+    id: str
+    budget_id: str
+    user_id: str
+    date: date
+    type: Literal["income", "expense", "transfer"]
+    amount: int
+    account_id: str | None = None
+    to_account_id: str | None = None
+    category_id: str | None = None
+    tag: Literal["one_time", "subscription"]
+    note: str | None = None
+    created_at: str
 
 
 @router.post("/auth/telegram")
@@ -114,3 +148,27 @@ def post_categories(
     return create_category(
         current_user["sub"], payload.budget_id, payload.name, payload.parent_id
     )
+
+
+@router.get("/transactions")
+def get_transactions(
+    budget_id: str,
+    date: date,
+    current_user: dict = Depends(get_current_user),
+) -> list[TransactionOut]:
+    return list_transactions(current_user["sub"], budget_id, date.isoformat())
+
+
+@router.post("/transactions")
+def post_transactions(
+    payload: TransactionCreate, current_user: dict = Depends(get_current_user)
+) -> TransactionOut:
+    return create_transaction(current_user["sub"], payload.model_dump())
+
+
+@router.delete("/transactions/{tx_id}")
+def delete_transactions(
+    tx_id: str, current_user: dict = Depends(get_current_user)
+) -> dict[str, str]:
+    delete_transaction(current_user["sub"], tx_id)
+    return {"status": "deleted"}

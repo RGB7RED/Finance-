@@ -144,6 +144,21 @@ export type Category = {
   created_at: string;
 };
 
+export type Transaction = {
+  id: string;
+  budget_id: string;
+  user_id: string;
+  date: string;
+  type: "income" | "expense" | "transfer";
+  amount: number;
+  account_id: string | null;
+  to_account_id: string | null;
+  category_id: string | null;
+  tag: "one_time" | "subscription";
+  note: string | null;
+  created_at: string;
+};
+
 const authHeaders = (token: string) => ({
   Authorization: `Bearer ${token}`,
 });
@@ -198,4 +213,44 @@ export const createCategory = async (
     method: "POST",
     headers: authHeaders(token),
     body: JSON.stringify(payload),
+  });
+
+export const listTransactions = async (
+  token: string,
+  budgetId: string,
+  date: string,
+): Promise<Transaction[]> => {
+  const query = new URLSearchParams({ budget_id: budgetId, date });
+  return requestJson(`/transactions?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const createTransaction = async (
+  token: string,
+  payload: {
+    budget_id: string;
+    type: "income" | "expense" | "transfer";
+    amount: number;
+    date: string;
+    account_id?: string | null;
+    to_account_id?: string | null;
+    category_id?: string | null;
+    tag: "one_time" | "subscription";
+    note?: string | null;
+  },
+): Promise<Transaction> =>
+  requestJson("/transactions", {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  });
+
+export const deleteTransaction = async (
+  token: string,
+  id: string,
+): Promise<{ status: string }> =>
+  requestJson(`/transactions/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
   });

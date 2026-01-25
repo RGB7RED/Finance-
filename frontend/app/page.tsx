@@ -1,15 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
 
 import {
   type Account,
   type AuthError,
   type Budget,
   type Category,
+  type Transaction,
   authTelegram,
   createAccount,
   createCategory,
+  createTransaction,
+  deleteTransaction,
   ensureDefaultBudgets,
   getApiBaseUrl,
   getMe,
@@ -17,6 +26,7 @@ import {
   listAccounts,
   listBudgets,
   listCategories,
+  listTransactions,
 } from "../src/lib/api";
 import { clearToken, getToken, setToken } from "../src/lib/auth";
 import { getTelegramInitData } from "../src/lib/telegram";
@@ -57,10 +67,28 @@ export default function HomePage() {
   const [activeBudgetId, setActiveBudgetId] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accountName, setAccountName] = useState("");
   const [accountKind, setAccountKind] = useState("cash");
   const [categoryName, setCategoryName] = useState("");
   const [categoryParent, setCategoryParent] = useState("");
+  const [selectedDate, setSelectedDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [incomeAccountId, setIncomeAccountId] = useState("");
+  const [incomeAmount, setIncomeAmount] = useState("");
+  const [incomeNote, setIncomeNote] = useState("");
+  const [expenseAccountId, setExpenseAccountId] = useState("");
+  const [expenseAmount, setExpenseAmount] = useState("");
+  const [expenseCategoryId, setExpenseCategoryId] = useState("");
+  const [expenseTag, setExpenseTag] = useState<"one_time" | "subscription">(
+    "one_time",
+  );
+  const [expenseNote, setExpenseNote] = useState("");
+  const [transferFromAccountId, setTransferFromAccountId] = useState("");
+  const [transferToAccountId, setTransferToAccountId] = useState("");
+  const [transferAmount, setTransferAmount] = useState("");
+  const [transferNote, setTransferNote] = useState("");
   const [authErrorDetails, setAuthErrorDetails] =
     useState<AuthErrorDetails | null>(null);
   const [healthErrorDetails, setHealthErrorDetails] =
@@ -218,12 +246,15 @@ export default function HomePage() {
       setActiveBudgetId(nextBudgetId);
 
       try {
-        const [loadedAccounts, loadedCategories] = await Promise.all([
-          listAccounts(resolvedToken, nextBudgetId),
-          listCategories(resolvedToken, nextBudgetId),
-        ]);
+        const [loadedAccounts, loadedCategories, loadedTransactions] =
+          await Promise.all([
+            listAccounts(resolvedToken, nextBudgetId),
+            listCategories(resolvedToken, nextBudgetId),
+            listTransactions(resolvedToken, nextBudgetId, selectedDate),
+          ]);
         setAccounts(loadedAccounts);
         setCategories(loadedCategories);
+        setTransactions(loadedTransactions);
         setStatus("ready");
       } catch (error) {
         setStatus("error");
@@ -245,6 +276,7 @@ export default function HomePage() {
     setActiveBudgetId(null);
     setAccounts([]);
     setCategories([]);
+    setTransactions([]);
   };
 
   const categoryMap = useMemo(() => {
@@ -257,6 +289,26 @@ export default function HomePage() {
     });
     return map;
   }, [categories]);
+
+  const accountMap = useMemo(() => {
+    const map = new Map<string, Account>();
+    accounts.forEach((account) => {
+      map.set(account.id, account);
+    });
+    return map;
+  }, [accounts]);
+
+  const dailyTotal = useMemo(() => {
+    return transactions.reduce((total, tx) => {
+      if (tx.type === "income") {
+        return total + tx.amount;
+      }
+      if (tx.type === "expense") {
+        return total - tx.amount;
+      }
+      return total;
+    }, 0);
+  }, [transactions]);
 
   const renderCategoryTree = (parentId: string | null) => {
     const key = parentId ?? "root";
@@ -285,18 +337,41 @@ export default function HomePage() {
     setActiveBudgetId(nextBudgetId);
     localStorage.setItem(ACTIVE_BUDGET_STORAGE_KEY, nextBudgetId);
     try {
-      const [loadedAccounts, loadedCategories] = await Promise.all([
-        listAccounts(token, nextBudgetId),
-        listCategories(token, nextBudgetId),
-      ]);
+      const [loadedAccounts, loadedCategories, loadedTransactions] =
+        await Promise.all([
+          listAccounts(token, nextBudgetId),
+          listCategories(token, nextBudgetId),
+          listTransactions(token, nextBudgetId, selectedDate),
+        ]);
       setAccounts(loadedAccounts);
       setCategories(loadedCategories);
+      setTransactions(loadedTransactions);
     } catch (error) {
       setMessage(
         buildErrorMessage("Не удалось загрузить счета и категории", error),
       );
     }
   };
+
+  useEffect(() => {
+    const loadTransactionsForDate = async () => {
+      if (!token || !activeBudgetId) {
+        return;
+      }
+      try {
+        const loadedTransactions = await listTransactions(
+          token,
+          activeBudgetId,
+          selectedDate,
+        );
+        setTransactions(loadedTransactions);
+      } catch (error) {
+        setMessage(buildErrorMessage("Не удалось загрузить операции", error));
+      }
+    };
+
+    void loadTransactionsForDate();
+  }, [token, activeBudgetId, selectedDate]);
 
   const handleCreateAccount = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -337,6 +412,145 @@ export default function HomePage() {
       setCategories(updatedCategories);
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось добавить категорию", error));
+    }
+  };
+
+  const handleCreateIncome = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    const amount = Number(incomeAmount);
+    if (!incomeAccountId) {
+      setMessage("Выберите счет");
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setMessage("Сумма должна быть больше нуля");
+      return;
+    }
+    setMessage("");
+    try {
+      await createTransaction(token, {
+        budget_id: activeBudgetId,
+        type: "income",
+        amount,
+        date: selectedDate,
+        account_id: incomeAccountId,
+        tag: "one_time",
+        note: incomeNote ? incomeNote : null,
+      });
+      setIncomeAmount("");
+      setIncomeNote("");
+      const updatedTransactions = await listTransactions(
+        token,
+        activeBudgetId,
+        selectedDate,
+      );
+      setTransactions(updatedTransactions);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось добавить доход", error));
+    }
+  };
+
+  const handleCreateExpense = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    const amount = Number(expenseAmount);
+    if (!expenseAccountId) {
+      setMessage("Выберите счет");
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setMessage("Сумма должна быть больше нуля");
+      return;
+    }
+    setMessage("");
+    const categoryId = expenseCategoryId ? expenseCategoryId : null;
+    try {
+      await createTransaction(token, {
+        budget_id: activeBudgetId,
+        type: "expense",
+        amount,
+        date: selectedDate,
+        account_id: expenseAccountId,
+        category_id: categoryId,
+        tag: expenseTag,
+        note: expenseNote ? expenseNote : null,
+      });
+      setExpenseAmount("");
+      setExpenseNote("");
+      const updatedTransactions = await listTransactions(
+        token,
+        activeBudgetId,
+        selectedDate,
+      );
+      setTransactions(updatedTransactions);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось добавить расход", error));
+    }
+  };
+
+  const handleCreateTransfer = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    const amount = Number(transferAmount);
+    if (!transferFromAccountId || !transferToAccountId) {
+      setMessage("Выберите счета");
+      return;
+    }
+    if (transferFromAccountId === transferToAccountId) {
+      setMessage("Счета перевода должны различаться");
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setMessage("Сумма должна быть больше нуля");
+      return;
+    }
+    setMessage("");
+    try {
+      await createTransaction(token, {
+        budget_id: activeBudgetId,
+        type: "transfer",
+        amount,
+        date: selectedDate,
+        account_id: transferFromAccountId,
+        to_account_id: transferToAccountId,
+        tag: "one_time",
+        note: transferNote ? transferNote : null,
+      });
+      setTransferAmount("");
+      setTransferNote("");
+      const updatedTransactions = await listTransactions(
+        token,
+        activeBudgetId,
+        selectedDate,
+      );
+      setTransactions(updatedTransactions);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось добавить перевод", error));
+    }
+  };
+
+  const handleDeleteTransaction = async (txId: string) => {
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    setMessage("");
+    try {
+      await deleteTransaction(token, txId);
+      const updatedTransactions = await listTransactions(
+        token,
+        activeBudgetId,
+        selectedDate,
+      );
+      setTransactions(updatedTransactions);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось удалить операцию", error));
     }
   };
 
@@ -428,6 +642,232 @@ export default function HomePage() {
           <section>
             <h2>Категории</h2>
             {categories.length ? renderCategoryTree(null) : <p>Нет категорий</p>}
+          </section>
+
+          <section>
+            <h2>Операции за день</h2>
+            <label>
+              Дата:
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(event) => setSelectedDate(event.target.value)}
+              />
+            </label>
+            {transactions.length ? (
+              <ul>
+                {transactions.map((tx) => {
+                  const accountName =
+                    (tx.account_id && accountMap.get(tx.account_id)?.name) ||
+                    "Счет";
+                  const toAccountName =
+                    (tx.to_account_id &&
+                      accountMap.get(tx.to_account_id)?.name) ||
+                    "Счет";
+                  const categoryName =
+                    (tx.category_id &&
+                      categories.find((cat) => cat.id === tx.category_id)
+                        ?.name) ||
+                    null;
+                  return (
+                    <li key={tx.id}>
+                      <div>
+                        <strong>{tx.type}</strong>: {tx.amount} ₽{" "}
+                        {tx.type === "transfer" && (
+                          <span>
+                            {accountName} → {toAccountName}
+                          </span>
+                        )}
+                        {tx.type !== "transfer" && <span>{accountName}</span>}
+                        {tx.type === "expense" && (
+                          <span>
+                            {" "}
+                            {categoryName ? `(${categoryName})` : "(Без категории)"}
+                          </span>
+                        )}
+                        {tx.note && <span> — {tx.note}</span>}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteTransaction(tx.id)}
+                      >
+                        Удалить
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p>Нет операций</p>
+            )}
+            <p>Итог за день (нижний): {dailyTotal} ₽</p>
+          </section>
+
+          <section>
+            <h2>Добавить доход</h2>
+            <form onSubmit={handleCreateIncome}>
+              <label>
+                Счет:
+                <select
+                  value={incomeAccountId}
+                  onChange={(event) => setIncomeAccountId(event.target.value)}
+                  required
+                >
+                  <option value="">Выберите счет</option>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Сумма:
+                <input
+                  type="number"
+                  min="1"
+                  value={incomeAmount}
+                  onChange={(event) => setIncomeAmount(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Заметка:
+                <input
+                  type="text"
+                  value={incomeNote}
+                  onChange={(event) => setIncomeNote(event.target.value)}
+                />
+              </label>
+              <button type="submit">Добавить</button>
+            </form>
+          </section>
+
+          <section>
+            <h2>Добавить расход</h2>
+            <form onSubmit={handleCreateExpense}>
+              <label>
+                Счет:
+                <select
+                  value={expenseAccountId}
+                  onChange={(event) => setExpenseAccountId(event.target.value)}
+                  required
+                >
+                  <option value="">Выберите счет</option>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Сумма:
+                <input
+                  type="number"
+                  min="1"
+                  value={expenseAmount}
+                  onChange={(event) => setExpenseAmount(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Категория:
+                <select
+                  value={expenseCategoryId}
+                  onChange={(event) => setExpenseCategoryId(event.target.value)}
+                >
+                  <option value="">Без категории</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Тег:
+                <select
+                  value={expenseTag}
+                  onChange={(event) =>
+                    setExpenseTag(
+                      event.target.value as "one_time" | "subscription",
+                    )
+                  }
+                >
+                  <option value="one_time">Разовый</option>
+                  <option value="subscription">Подписка</option>
+                </select>
+              </label>
+              <label>
+                Заметка:
+                <input
+                  type="text"
+                  value={expenseNote}
+                  onChange={(event) => setExpenseNote(event.target.value)}
+                />
+              </label>
+              <button type="submit">Добавить</button>
+            </form>
+          </section>
+
+          <section>
+            <h2>Добавить перевод</h2>
+            <form onSubmit={handleCreateTransfer}>
+              <label>
+                Откуда:
+                <select
+                  value={transferFromAccountId}
+                  onChange={(event) =>
+                    setTransferFromAccountId(event.target.value)
+                  }
+                  required
+                >
+                  <option value="">Выберите счет</option>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Куда:
+                <select
+                  value={transferToAccountId}
+                  onChange={(event) =>
+                    setTransferToAccountId(event.target.value)
+                  }
+                  required
+                >
+                  <option value="">Выберите счет</option>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Сумма:
+                <input
+                  type="number"
+                  min="1"
+                  value={transferAmount}
+                  onChange={(event) => setTransferAmount(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Заметка:
+                <input
+                  type="text"
+                  value={transferNote}
+                  onChange={(event) => setTransferNote(event.target.value)}
+                />
+              </label>
+              <button type="submit">Добавить</button>
+            </form>
           </section>
 
           <section>
