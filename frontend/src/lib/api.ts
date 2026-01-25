@@ -1,5 +1,7 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
+export const getApiBaseUrl = (): string | undefined => API_BASE_URL;
+
 type ApiError = Error & { status?: number };
 
 const buildError = (message: string, status?: number): ApiError => {
@@ -38,13 +40,67 @@ const requestJson = async <T>(
   return (await response.json()) as T;
 };
 
+type AuthError = Error & {
+  code?: "HTTP_ERROR" | "NETWORK_ERROR";
+  status?: number;
+  text?: string;
+};
+
+const buildAuthError = (
+  message: string,
+  options?: { code?: AuthError["code"]; status?: number; text?: string },
+): AuthError => {
+  const error = new Error(message) as AuthError;
+  if (options?.code) {
+    error.code = options.code;
+  }
+  if (options?.status) {
+    error.status = options.status;
+  }
+  if (options?.text) {
+    error.text = options.text;
+  }
+  return error;
+};
+
 export const authTelegram = async (
   initData: string,
-): Promise<{ access_token: string; token_type: string }> =>
-  requestJson("/auth/telegram", {
-    method: "POST",
-    body: JSON.stringify({ initData }),
-  });
+): Promise<{ access_token: string; token_type: string }> => {
+  if (!API_BASE_URL) {
+    throw buildAuthError("API недоступен");
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/telegram`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ initData }),
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text();
+      throw buildAuthError("Auth failed", {
+        code: "HTTP_ERROR",
+        status: response.status,
+        text: responseText,
+      });
+    }
+
+    return (await response.json()) as {
+      access_token: string;
+      token_type: string;
+    };
+  } catch (error) {
+    if (error instanceof Error && (error as AuthError).code === "HTTP_ERROR") {
+      throw error;
+    }
+    throw buildAuthError("Network error", { code: "NETWORK_ERROR" });
+  }
+};
+
+export type { AuthError };
 
 export const getMe = async (
   token: string,
