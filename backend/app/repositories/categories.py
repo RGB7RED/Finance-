@@ -50,10 +50,26 @@ def create_category(
                 "parent_id": parent_id,
             }
         )
-        .select("id, budget_id, name, parent_id, created_at")
-        .single()
         .execute()
     )
-    if not response.data:
+    data = response.data or []
+    if data:
+        return data[0]
+
+    fallback = (
+        client.table("categories")
+        .select("id, budget_id, name, parent_id, created_at")
+        .eq("budget_id", budget_id)
+        .eq("name", name)
+    )
+    if parent_id is None:
+        fallback = fallback.is_("parent_id", "null")
+    else:
+        fallback = fallback.eq("parent_id", parent_id)
+    fallback_response = (
+        fallback.order("created_at", desc=True).limit(1).execute()
+    )
+    fallback_data = fallback_response.data or []
+    if not fallback_data:
         raise RuntimeError("Failed to create category in Supabase")
-    return response.data
+    return fallback_data[0]
