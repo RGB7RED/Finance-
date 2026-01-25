@@ -166,6 +166,19 @@ export type Transaction = {
   created_at: string;
 };
 
+export type DailyState = {
+  budget_id: string;
+  user_id: string;
+  date: string;
+  cash_total: number;
+  bank_total: number;
+  debt_cards_total: number;
+  debt_other_total: number;
+  assets_total: number;
+  debts_total: number;
+  balance: number;
+};
+
 const authHeaders = (token: string) => ({
   Authorization: `Bearer ${token}`,
 });
@@ -321,3 +334,62 @@ export const deleteTransaction = async (
     method: "DELETE",
     headers: authHeaders(token),
   });
+
+export const getDailyState = async (
+  token: string,
+  budgetId: string,
+  date: string,
+): Promise<DailyState> => {
+  const query = new URLSearchParams({ budget_id: budgetId, date });
+  return requestJson(`/daily-state?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const updateDailyState = async (
+  token: string,
+  payload: {
+    budget_id: string;
+    date: string;
+    cash_total?: number;
+    bank_total?: number;
+    debt_cards_total?: number;
+    debt_other_total?: number;
+  },
+): Promise<DailyState> => {
+  if (!API_BASE_URL) {
+    throw buildError("API недоступен");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/daily-state`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw buildError("API недоступен");
+  }
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw buildError("Request failed", response.status, responseText);
+  }
+
+  return (await response.json()) as DailyState;
+};
+
+export const getDailyDelta = async (
+  token: string,
+  budgetId: string,
+  date: string,
+): Promise<{ top_day_total: number }> => {
+  const query = new URLSearchParams({ budget_id: budgetId, date });
+  return requestJson(`/daily-state/delta?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};

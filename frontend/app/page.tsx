@@ -13,6 +13,7 @@ import {
   type AuthError,
   type Budget,
   type Category,
+  type DailyState,
   type Transaction,
   authTelegram,
   createAccount,
@@ -20,6 +21,8 @@ import {
   createTransaction,
   deleteTransaction,
   ensureDefaultBudgets,
+  getDailyDelta,
+  getDailyState,
   getApiBaseUrl,
   getMe,
   isUnauthorized,
@@ -27,6 +30,7 @@ import {
   listBudgets,
   listCategories,
   listTransactions,
+  updateDailyState,
 } from "../src/lib/api";
 import { clearToken, getToken, setToken } from "../src/lib/auth";
 import { getTelegramInitData } from "../src/lib/telegram";
@@ -73,6 +77,14 @@ export default function HomePage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [dailyState, setDailyState] = useState<DailyState | null>(null);
+  const [dailyDelta, setDailyDelta] = useState<number | null>(null);
+  const [dailyStateForm, setDailyStateForm] = useState({
+    cash_total: "",
+    bank_total: "",
+    debt_cards_total: "",
+    debt_other_total: "",
+  });
   const [accountName, setAccountName] = useState("");
   const [accountKind, setAccountKind] = useState("cash");
   const [categoryName, setCategoryName] = useState("");
@@ -108,6 +120,34 @@ export default function HomePage() {
     useState<FormErrorDetails | null>(null);
   const [transferErrorDetails, setTransferErrorDetails] =
     useState<FormErrorDetails | null>(null);
+
+  const setDailyStateFromData = (state: DailyState) => {
+    setDailyState(state);
+    setDailyStateForm({
+      cash_total: String(state.cash_total ?? 0),
+      bank_total: String(state.bank_total ?? 0),
+      debt_cards_total: String(state.debt_cards_total ?? 0),
+      debt_other_total: String(state.debt_other_total ?? 0),
+    });
+  };
+
+  const parseAmount = (value: string): number => {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const loadDailyStateData = async (
+    authToken: string,
+    budgetId: string,
+    dateValue: string,
+  ) => {
+    const [state, delta] = await Promise.all([
+      getDailyState(authToken, budgetId, dateValue),
+      getDailyDelta(authToken, budgetId, dateValue),
+    ]);
+    setDailyStateFromData(state);
+    setDailyDelta(delta.top_day_total);
+  };
 
   useEffect(() => {
     const loadDashboard = async () => {
@@ -266,6 +306,7 @@ export default function HomePage() {
             listAccounts(resolvedToken, nextBudgetId),
             listCategories(resolvedToken, nextBudgetId),
             listTransactions(resolvedToken, nextBudgetId, selectedDate),
+            loadDailyStateData(resolvedToken, nextBudgetId, selectedDate),
           ]);
         setAccounts(loadedAccounts);
         setCategories(loadedCategories);
@@ -292,6 +333,14 @@ export default function HomePage() {
     setAccounts([]);
     setCategories([]);
     setTransactions([]);
+    setDailyState(null);
+    setDailyDelta(null);
+    setDailyStateForm({
+      cash_total: "",
+      bank_total: "",
+      debt_cards_total: "",
+      debt_other_total: "",
+    });
   };
 
   const categoryMap = useMemo(() => {
@@ -325,6 +374,29 @@ export default function HomePage() {
     }, 0);
   }, [transactions]);
 
+  const assetsTotal = useMemo(() => {
+    return (
+      parseAmount(dailyStateForm.cash_total) +
+      parseAmount(dailyStateForm.bank_total)
+    );
+  }, [dailyStateForm.bank_total, dailyStateForm.cash_total]);
+
+  const debtsTotal = useMemo(() => {
+    return (
+      parseAmount(dailyStateForm.debt_cards_total) +
+      parseAmount(dailyStateForm.debt_other_total)
+    );
+  }, [dailyStateForm.debt_cards_total, dailyStateForm.debt_other_total]);
+
+  const balanceTotal = useMemo(() => {
+    return assetsTotal - debtsTotal;
+  }, [assetsTotal, debtsTotal]);
+
+  const topDayTotal = dailyDelta ?? 0;
+  const dayDiff = topDayTotal - dailyTotal;
+  const dayDiffAbs = Math.abs(dayDiff);
+  const isReconciled = dayDiffAbs <= 1;
+
   const renderCategoryTree = (parentId: string | null) => {
     const key = parentId ?? "root";
     const items = categoryMap.get(key) ?? [];
@@ -357,6 +429,7 @@ export default function HomePage() {
           listAccounts(token, nextBudgetId),
           listCategories(token, nextBudgetId),
           listTransactions(token, nextBudgetId, selectedDate),
+          loadDailyStateData(token, nextBudgetId, selectedDate),
         ]);
       setAccounts(loadedAccounts);
       setCategories(loadedCategories);
@@ -374,11 +447,10 @@ export default function HomePage() {
         return;
       }
       try {
-        const loadedTransactions = await listTransactions(
-          token,
-          activeBudgetId,
-          selectedDate,
-        );
+        const [loadedTransactions] = await Promise.all([
+          listTransactions(token, activeBudgetId, selectedDate),
+          loadDailyStateData(token, activeBudgetId, selectedDate),
+        ]);
         setTransactions(loadedTransactions);
       } catch (error) {
         setMessage(buildErrorMessage("Не удалось загрузить операции", error));
@@ -599,6 +671,71 @@ export default function HomePage() {
     }
   };
 
+  const handleDailyStateChange = (
+    field: keyof typeof dailyStateForm,
+    value: string,
+  ) => {
+    if (Number.parseInt(value, 10) < 0) {
+      return;
+    }
+    setDailyStateForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSaveDailyState = async () => {
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    setMessage("");
+    try {
+      const payload = {
+        budget_id: activeBudgetId,
+        date: selectedDate,
+        cash_total: parseAmount(dailyStateForm.cash_total),
+        bank_total: parseAmount(dailyStateForm.bank_total),
+        debt_cards_total: parseAmount(dailyStateForm.debt_cards_total),
+        debt_other_total: parseAmount(dailyStateForm.debt_other_total),
+      };
+      const updated = await updateDailyState(token, payload);
+      setDailyStateFromData(updated);
+      const delta = await getDailyDelta(token, activeBudgetId, selectedDate);
+      setDailyDelta(delta.top_day_total);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось сохранить состояние дня", error));
+    }
+  };
+
+  const handleQuickAdjust = async (
+    field: "cash_total" | "bank_total",
+    delta: number,
+  ) => {
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    const currentValue = parseAmount(dailyStateForm[field]);
+    const nextValue = currentValue + delta;
+    if (nextValue < 0) {
+      setMessage("Нельзя уменьшить ниже нуля");
+      return;
+    }
+    setMessage("");
+    try {
+      const updated = await updateDailyState(token, {
+        budget_id: activeBudgetId,
+        date: selectedDate,
+        [field]: nextValue,
+      });
+      setDailyStateFromData(updated);
+      const updatedDelta = await getDailyDelta(
+        token,
+        activeBudgetId,
+        selectedDate,
+      );
+      setDailyDelta(updatedDelta.top_day_total);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось обновить состояние дня", error));
+    }
+  };
+
   return (
     <main>
       <h1>Мои финансы</h1>
@@ -690,6 +827,69 @@ export default function HomePage() {
           </section>
 
           <section>
+            <h2>Состояние дня (верхняя таблица)</h2>
+            <div>
+              <label>
+                Наличка:
+                <input
+                  type="number"
+                  min="0"
+                  value={dailyStateForm.cash_total}
+                  onChange={(event) =>
+                    handleDailyStateChange("cash_total", event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Безнал:
+                <input
+                  type="number"
+                  min="0"
+                  value={dailyStateForm.bank_total}
+                  onChange={(event) =>
+                    handleDailyStateChange("bank_total", event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Кредитки/рассрочки:
+                <input
+                  type="number"
+                  min="0"
+                  value={dailyStateForm.debt_cards_total}
+                  onChange={(event) =>
+                    handleDailyStateChange(
+                      "debt_cards_total",
+                      event.target.value,
+                    )
+                  }
+                />
+              </label>
+              <label>
+                Долги людям:
+                <input
+                  type="number"
+                  min="0"
+                  value={dailyStateForm.debt_other_total}
+                  onChange={(event) =>
+                    handleDailyStateChange(
+                      "debt_other_total",
+                      event.target.value,
+                    )
+                  }
+                />
+              </label>
+            </div>
+            <p>Остаток: {assetsTotal} ₽</p>
+            <p>Долги: {debtsTotal} ₽</p>
+            <p>Баланс: {balanceTotal} ₽</p>
+            <p>Итог за день (верхний): {topDayTotal} ₽</p>
+            <button type="button" onClick={handleSaveDailyState}>
+              Сохранить состояние дня
+            </button>
+          </section>
+
+          <section>
             <h2>Операции за день</h2>
             <label>
               Дата:
@@ -746,6 +946,50 @@ export default function HomePage() {
               <p>Нет операций</p>
             )}
             <p>Итог за день (нижний): {dailyTotal} ₽</p>
+          </section>
+
+          <section>
+            <h2>Сверка</h2>
+            {isReconciled ? (
+              <p>Сверка: OK</p>
+            ) : (
+              <>
+                <p>Сверка: расхождение {dayDiffAbs} ₽</p>
+                <p>
+                  {dayDiff < 0
+                    ? "Не учтены изменения остатков (наличка/безнал)"
+                    : "Не учтены расходы/переводы в операциях"}
+                </p>
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickAdjust("cash_total", -dayDiffAbs)}
+                  >
+                    Уменьшить наличку на {dayDiffAbs} ₽
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleQuickAdjust("bank_total", -dayDiffAbs)
+                    }
+                  >
+                    Уменьшить безнал на {dayDiffAbs} ₽
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickAdjust("cash_total", dayDiffAbs)}
+                  >
+                    Увеличить наличку на {dayDiffAbs} ₽
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickAdjust("bank_total", dayDiffAbs)}
+                  >
+                    Увеличить безнал на {dayDiffAbs} ₽
+                  </button>
+                </div>
+              </>
+            )}
           </section>
 
           <section>

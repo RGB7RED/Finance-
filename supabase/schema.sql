@@ -67,3 +67,17 @@ create table if not exists public.transactions (
     check ((type = 'income' and category_id is null) or type <> 'income'),
     check ((type = 'transfer' and category_id is null) or type <> 'transfer')
 );
+
+create table if not exists public.daily_state (
+    id uuid primary key default gen_random_uuid(),
+    budget_id uuid not null references public.budgets(id) on delete cascade,
+    user_id uuid not null references public.users(id) on delete cascade,
+    date date not null,
+    cash_total integer not null default 0 check (cash_total >= 0),
+    bank_total integer not null default 0 check (bank_total >= 0),
+    debt_cards_total integer not null default 0 check (debt_cards_total >= 0),
+    debt_other_total integer not null default 0 check (debt_other_total >= 0),
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    unique (budget_id, date)
+);
