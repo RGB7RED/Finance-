@@ -20,6 +20,8 @@ import {
   type Goal,
   type ReconcileSummary,
   type ReportsSummary,
+  type Rule,
+  type Suggestion,
   type Transaction,
   authTelegram,
   createAccount,
@@ -27,9 +29,11 @@ import {
   createDebtOther,
   createGoal,
   createTransaction,
+  deleteRule,
   deleteGoal,
   deleteTransaction,
   ensureDefaultBudgets,
+  feedback,
   getDailyState,
   getApiBaseUrl,
   getMe,
@@ -42,8 +46,10 @@ import {
   listBudgets,
   listCategories,
   listGoals,
+  listRules,
   listTransactions,
   resetBudget,
+  suggest,
   updateGoal,
   updateDailyState,
 } from "../src/lib/api";
@@ -103,6 +109,7 @@ export default function HomePage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [rules, setRules] = useState<Rule[]>([]);
   const [dailyState, setDailyState] = useState<DailyState | null>(null);
   const [reconcileSummary, setReconcileSummary] =
     useState<ReconcileSummary | null>(null);
@@ -133,6 +140,10 @@ export default function HomePage() {
   const [incomeAccountId, setIncomeAccountId] = useState("");
   const [incomeAmount, setIncomeAmount] = useState("");
   const [incomeNote, setIncomeNote] = useState("");
+  const [incomeSuggestion, setIncomeSuggestion] = useState<Suggestion | null>(
+    null,
+  );
+  const [incomeSuggestionApplied, setIncomeSuggestionApplied] = useState(false);
   const [expenseAccountId, setExpenseAccountId] = useState("");
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseCategoryId, setExpenseCategoryId] = useState("");
@@ -140,6 +151,11 @@ export default function HomePage() {
     "one_time",
   );
   const [expenseNote, setExpenseNote] = useState("");
+  const [expenseSuggestion, setExpenseSuggestion] = useState<Suggestion | null>(
+    null,
+  );
+  const [expenseSuggestionApplied, setExpenseSuggestionApplied] =
+    useState(false);
   const [transferFromAccountId, setTransferFromAccountId] = useState("");
   const [transferToAccountId, setTransferToAccountId] = useState("");
   const [transferAmount, setTransferAmount] = useState("");
@@ -227,6 +243,11 @@ export default function HomePage() {
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось загрузить отчеты", error));
     }
+  };
+
+  const loadRulesData = async (authToken: string, budgetId: string) => {
+    const loadedRules = await listRules(authToken, budgetId);
+    setRules(loadedRules);
   };
 
   useEffect(() => {
@@ -386,17 +407,20 @@ export default function HomePage() {
           loadedCategories,
           loadedTransactions,
           loadedGoals,
+          loadedRules,
         ] = await Promise.all([
           listAccounts(resolvedToken, nextBudgetId),
           listCategories(resolvedToken, nextBudgetId),
           listTransactions(resolvedToken, nextBudgetId, selectedDate),
           listGoals(resolvedToken, nextBudgetId),
+          listRules(resolvedToken, nextBudgetId),
         ]);
         await loadDailyStateData(resolvedToken, nextBudgetId, selectedDate);
         setAccounts(loadedAccounts);
         setCategories(loadedCategories);
         setTransactions(loadedTransactions);
         setGoals(loadedGoals);
+        setRules(loadedRules);
         setStatus("ready");
       } catch (error) {
         setStatus("error");
@@ -420,6 +444,7 @@ export default function HomePage() {
     setCategories([]);
     setTransactions([]);
     setGoals([]);
+    setRules([]);
     setDailyState(null);
     setReconcileSummary(null);
     setReportCashflow([]);
@@ -437,6 +462,10 @@ export default function HomePage() {
     setGoalTitle("");
     setGoalTargetAmount("");
     setGoalDeadline("");
+    setIncomeSuggestion(null);
+    setExpenseSuggestion(null);
+    setIncomeSuggestionApplied(false);
+    setExpenseSuggestionApplied(false);
   };
 
   const categoryMap = useMemo(() => {
@@ -457,6 +486,43 @@ export default function HomePage() {
     });
     return map;
   }, [accounts]);
+
+  const getTagLabel = (tag: "one_time" | "subscription" | null | undefined) =>
+    tag === "subscription" ? "Подписка" : tag === "one_time" ? "Разовый" : "";
+
+  const formatRuleTarget = (rule: Rule) => {
+    const parts: string[] = [];
+    if (rule.account_id) {
+      parts.push(accountMap.get(rule.account_id)?.name ?? "Счет");
+    }
+    if (rule.category_id) {
+      parts.push(
+        categories.find((category) => category.id === rule.category_id)?.name ??
+          "Категория",
+      );
+    }
+    if (rule.tag) {
+      parts.push(getTagLabel(rule.tag));
+    }
+    return parts.length ? parts.join(", ") : "—";
+  };
+
+  const formatSuggestionTarget = (suggestion: Suggestion) => {
+    const parts: string[] = [];
+    if (suggestion.account_id) {
+      parts.push(accountMap.get(suggestion.account_id)?.name ?? "Счет");
+    }
+    if (suggestion.category_id) {
+      parts.push(
+        categories.find((category) => category.id === suggestion.category_id)
+          ?.name ?? "Категория",
+      );
+    }
+    if (suggestion.tag) {
+      parts.push(getTagLabel(suggestion.tag));
+    }
+    return parts.length ? parts.join(", ") : "—";
+  };
 
   const dailyTotal = useMemo(() => {
     return transactions.reduce((total, tx) => {
@@ -517,6 +583,10 @@ export default function HomePage() {
   const reconcileDiff = reconcileSummary?.diff ?? 0;
   const reconcileDiffAbs = Math.abs(reconcileDiff);
   const isReconciled = reconcileSummary?.is_ok ?? true;
+  const showIncomeSuggestion =
+    incomeSuggestion && incomeSuggestion.confidence >= 0.6;
+  const showExpenseSuggestion =
+    expenseSuggestion && expenseSuggestion.confidence >= 0.6;
 
   const renderCategoryTree = (parentId: string | null) => {
     const key = parentId ?? "root";
@@ -544,24 +614,31 @@ export default function HomePage() {
     setMessage("");
     setActiveBudgetId(nextBudgetId);
     localStorage.setItem(ACTIVE_BUDGET_STORAGE_KEY, nextBudgetId);
-      try {
-        const [
-          loadedAccounts,
-          loadedCategories,
-          loadedTransactions,
-          loadedGoals,
-        ] = await Promise.all([
-          listAccounts(token, nextBudgetId),
-          listCategories(token, nextBudgetId),
-          listTransactions(token, nextBudgetId, selectedDate),
-          listGoals(token, nextBudgetId),
-        ]);
-        await loadDailyStateData(token, nextBudgetId, selectedDate);
-        setAccounts(loadedAccounts);
-        setCategories(loadedCategories);
-        setTransactions(loadedTransactions);
-        setGoals(loadedGoals);
-      } catch (error) {
+    setIncomeSuggestion(null);
+    setExpenseSuggestion(null);
+    setIncomeSuggestionApplied(false);
+    setExpenseSuggestionApplied(false);
+    try {
+      const [
+        loadedAccounts,
+        loadedCategories,
+        loadedTransactions,
+        loadedGoals,
+        loadedRules,
+      ] = await Promise.all([
+        listAccounts(token, nextBudgetId),
+        listCategories(token, nextBudgetId),
+        listTransactions(token, nextBudgetId, selectedDate),
+        listGoals(token, nextBudgetId),
+        listRules(token, nextBudgetId),
+      ]);
+      await loadDailyStateData(token, nextBudgetId, selectedDate);
+      setAccounts(loadedAccounts);
+      setCategories(loadedCategories);
+      setTransactions(loadedTransactions);
+      setGoals(loadedGoals);
+      setRules(loadedRules);
+    } catch (error) {
       setMessage(
         buildErrorMessage("Не удалось загрузить счета и категории", error),
       );
@@ -592,6 +669,78 @@ export default function HomePage() {
   useEffect(() => {
     void loadReports();
   }, [token, activeBudgetId, reportFrom, reportTo]);
+
+  useEffect(() => {
+    if (!token || !activeBudgetId) {
+      setIncomeSuggestion(null);
+      setIncomeSuggestionApplied(false);
+      return;
+    }
+    const trimmedNote = incomeNote.trim();
+    if (!trimmedNote) {
+      setIncomeSuggestion(null);
+      setIncomeSuggestionApplied(false);
+      return;
+    }
+    let isCancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const response = await suggest(token, {
+          budget_id: activeBudgetId,
+          note: trimmedNote,
+        });
+        if (!isCancelled) {
+          setIncomeSuggestion(response);
+          setIncomeSuggestionApplied(false);
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          setIncomeSuggestion(null);
+          setIncomeSuggestionApplied(false);
+        }
+      }
+    }, 300);
+    return () => {
+      isCancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [token, activeBudgetId, incomeNote]);
+
+  useEffect(() => {
+    if (!token || !activeBudgetId) {
+      setExpenseSuggestion(null);
+      setExpenseSuggestionApplied(false);
+      return;
+    }
+    const trimmedNote = expenseNote.trim();
+    if (!trimmedNote) {
+      setExpenseSuggestion(null);
+      setExpenseSuggestionApplied(false);
+      return;
+    }
+    let isCancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const response = await suggest(token, {
+          budget_id: activeBudgetId,
+          note: trimmedNote,
+        });
+        if (!isCancelled) {
+          setExpenseSuggestion(response);
+          setExpenseSuggestionApplied(false);
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          setExpenseSuggestion(null);
+          setExpenseSuggestionApplied(false);
+        }
+      }
+    }, 300);
+    return () => {
+      isCancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [token, activeBudgetId, expenseNote]);
 
   const handleCreateAccount = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -647,6 +796,91 @@ export default function HomePage() {
     }
   };
 
+  const handleDeleteRule = async (ruleId: string) => {
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    setMessage("");
+    try {
+      await deleteRule(token, ruleId);
+      await loadRulesData(token, activeBudgetId);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось удалить правило", error));
+    }
+  };
+
+  const handleApplyIncomeSuggestion = () => {
+    if (!incomeSuggestion) {
+      return;
+    }
+    if (incomeSuggestion.account_id) {
+      setIncomeAccountId(incomeSuggestion.account_id);
+    }
+    setIncomeSuggestionApplied(true);
+  };
+
+  const handleRejectIncomeSuggestion = async () => {
+    if (!token || !activeBudgetId || !incomeSuggestion) {
+      return;
+    }
+    setMessage("");
+    try {
+      await feedback(token, {
+        budget_id: activeBudgetId,
+        note: incomeNote,
+        accepted: false,
+        account_id: incomeSuggestion.account_id ?? null,
+        category_id: incomeSuggestion.category_id ?? null,
+        tag: incomeSuggestion.tag ?? null,
+      });
+      await loadRulesData(token, activeBudgetId);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось отправить отклик", error));
+    } finally {
+      setIncomeSuggestion(null);
+      setIncomeSuggestionApplied(false);
+    }
+  };
+
+  const handleApplyExpenseSuggestion = () => {
+    if (!expenseSuggestion) {
+      return;
+    }
+    if (expenseSuggestion.account_id) {
+      setExpenseAccountId(expenseSuggestion.account_id);
+    }
+    if (expenseSuggestion.category_id) {
+      setExpenseCategoryId(expenseSuggestion.category_id);
+    }
+    if (expenseSuggestion.tag) {
+      setExpenseTag(expenseSuggestion.tag);
+    }
+    setExpenseSuggestionApplied(true);
+  };
+
+  const handleRejectExpenseSuggestion = async () => {
+    if (!token || !activeBudgetId || !expenseSuggestion) {
+      return;
+    }
+    setMessage("");
+    try {
+      await feedback(token, {
+        budget_id: activeBudgetId,
+        note: expenseNote,
+        accepted: false,
+        account_id: expenseSuggestion.account_id ?? null,
+        category_id: expenseSuggestion.category_id ?? null,
+        tag: expenseSuggestion.tag ?? null,
+      });
+      await loadRulesData(token, activeBudgetId);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось отправить отклик", error));
+    } finally {
+      setExpenseSuggestion(null);
+      setExpenseSuggestionApplied(false);
+    }
+  };
+
   const handleCreateIncome = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!token || !activeBudgetId) {
@@ -663,6 +897,7 @@ export default function HomePage() {
     }
     setMessage("");
     setIncomeErrorDetails(null);
+    const feedbackNote = incomeNote;
     try {
       await createTransaction(token, {
         budget_id: activeBudgetId,
@@ -673,8 +908,25 @@ export default function HomePage() {
         tag: "one_time",
         note: incomeNote ? incomeNote : null,
       });
+      if (incomeSuggestionApplied && feedbackNote.trim()) {
+        try {
+          await feedback(token, {
+            budget_id: activeBudgetId,
+            note: feedbackNote,
+            accepted: true,
+            account_id: incomeAccountId,
+            category_id: null,
+            tag: null,
+          });
+          await loadRulesData(token, activeBudgetId);
+        } catch (error) {
+          setMessage(buildErrorMessage("Не удалось сохранить отклик", error));
+        }
+      }
       setIncomeAmount("");
       setIncomeNote("");
+      setIncomeSuggestion(null);
+      setIncomeSuggestionApplied(false);
       const updatedTransactions = await listTransactions(
         token,
         activeBudgetId,
@@ -709,6 +961,7 @@ export default function HomePage() {
     setMessage("");
     setExpenseErrorDetails(null);
     const categoryId = expenseCategoryId ? expenseCategoryId : null;
+    const feedbackNote = expenseNote;
     try {
       await createTransaction(token, {
         budget_id: activeBudgetId,
@@ -720,8 +973,25 @@ export default function HomePage() {
         tag: expenseTag,
         note: expenseNote ? expenseNote : null,
       });
+      if (expenseSuggestionApplied && feedbackNote.trim()) {
+        try {
+          await feedback(token, {
+            budget_id: activeBudgetId,
+            note: feedbackNote,
+            accepted: true,
+            account_id: expenseAccountId,
+            category_id: categoryId,
+            tag: expenseTag,
+          });
+          await loadRulesData(token, activeBudgetId);
+        } catch (error) {
+          setMessage(buildErrorMessage("Не удалось сохранить отклик", error));
+        }
+      }
       setExpenseAmount("");
       setExpenseNote("");
+      setExpenseSuggestion(null);
+      setExpenseSuggestionApplied(false);
       const updatedTransactions = await listTransactions(
         token,
         activeBudgetId,
@@ -1049,17 +1319,20 @@ export default function HomePage() {
         loadedCategories,
         loadedTransactions,
         loadedGoals,
+        loadedRules,
       ] = await Promise.all([
         listAccounts(token, activeBudgetId),
         listCategories(token, activeBudgetId),
         listTransactions(token, activeBudgetId, selectedDate),
         listGoals(token, activeBudgetId),
+        listRules(token, activeBudgetId),
       ]);
       await loadDailyStateData(token, activeBudgetId, selectedDate);
       setAccounts(loadedAccounts);
       setCategories(loadedCategories);
       setTransactions(loadedTransactions);
       setGoals(loadedGoals);
+      setRules(loadedRules);
       await loadReports();
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось обнулить бюджет", error));
@@ -1272,6 +1545,41 @@ export default function HomePage() {
           <section>
             <h2>Категории</h2>
             {categories.length ? renderCategoryTree(null) : <p>Нет категорий</p>}
+          </section>
+
+          <section>
+            <h2>Мои правила</h2>
+            {rules.length ? (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Шаблон</th>
+                    <th>Цель</th>
+                    <th>Confidence</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rules.map((rule) => (
+                    <tr key={rule.id}>
+                      <td>{rule.pattern}</td>
+                      <td>{formatRuleTarget(rule)}</td>
+                      <td>{rule.confidence.toFixed(2)}</td>
+                      <td>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRule(rule.id)}
+                        >
+                          Удалить
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p>Нет правил</p>
+            )}
           </section>
 
           <section>
@@ -1699,6 +2007,29 @@ export default function HomePage() {
                   onChange={(event) => setIncomeNote(event.target.value)}
                 />
               </label>
+              {showIncomeSuggestion && incomeSuggestion && (
+                <div>
+                  <p>
+                    Подсказка: {formatSuggestionTarget(incomeSuggestion)}
+                    {incomeSuggestion.pattern
+                      ? ` (pattern: ${incomeSuggestion.pattern})`
+                      : ""}
+                    {` | confidence: ${incomeSuggestion.confidence.toFixed(2)}`}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleApplyIncomeSuggestion}
+                  >
+                    Применить
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRejectIncomeSuggestion}
+                  >
+                    Не подходит
+                  </button>
+                </div>
+              )}
               <button type="submit">Добавить</button>
             </form>
             {incomeErrorDetails && (
@@ -1778,6 +2109,29 @@ export default function HomePage() {
                   onChange={(event) => setExpenseNote(event.target.value)}
                 />
               </label>
+              {showExpenseSuggestion && expenseSuggestion && (
+                <div>
+                  <p>
+                    Подсказка: {formatSuggestionTarget(expenseSuggestion)}
+                    {expenseSuggestion.pattern
+                      ? ` (pattern: ${expenseSuggestion.pattern})`
+                      : ""}
+                    {` | confidence: ${expenseSuggestion.confidence.toFixed(2)}`}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleApplyExpenseSuggestion}
+                  >
+                    Применить
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRejectExpenseSuggestion}
+                  >
+                    Не подходит
+                  </button>
+                </div>
+              )}
               <button type="submit">Добавить</button>
             </form>
             {expenseErrorDetails && (
