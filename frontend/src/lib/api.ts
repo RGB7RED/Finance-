@@ -260,6 +260,26 @@ export type MonthReport = {
   avg_net_per_day: number;
 };
 
+export type ExpensesByCategoryChild = {
+  category_id: string;
+  category_name: string;
+  amount: number;
+  share: number;
+};
+
+export type ExpensesByCategoryItem = {
+  category_id: string;
+  category_name: string;
+  amount: number;
+  share: number;
+  children: ExpensesByCategoryChild[];
+};
+
+export type ExpensesByCategoryReport = {
+  total_expense: number;
+  items: ExpensesByCategoryItem[];
+};
+
 export type ReconcileSummary = {
   date: string;
   bottom_total: number;
@@ -804,6 +824,24 @@ export const getMonthReport = async (
 ): Promise<MonthReport> => {
   const query = new URLSearchParams({ budget_id: budgetId, month });
   return requestJson(`/reports/month?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const getExpensesByCategoryReport = async (
+  token: string,
+  budgetId: string,
+  from: string,
+  to: string,
+  limit: number,
+): Promise<ExpensesByCategoryReport> => {
+  const query = new URLSearchParams({
+    budget_id: budgetId,
+    from,
+    to,
+    limit: String(limit),
+  });
+  return requestJson(`/reports/expenses-by-category?${query.toString()}`, {
     headers: authHeaders(token),
   });
 };
