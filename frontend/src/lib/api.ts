@@ -201,6 +201,33 @@ export type Goal = {
   created_at: string;
 };
 
+export type CashflowDay = {
+  date: string;
+  income_total: number;
+  expense_total: number;
+  net_total: number;
+};
+
+export type BalanceDay = {
+  date: string;
+  assets_total: number;
+  debts_total: number;
+  balance: number;
+};
+
+export type ReportsGoal = {
+  title: string;
+  target: number;
+  current: number;
+  deadline: string | null;
+};
+
+export type ReportsSummary = {
+  debt_cards_total: number;
+  debt_other_total: number;
+  goals_active: ReportsGoal[];
+};
+
 const authHeaders = (token: string) => ({
   Authorization: `Bearer ${token}`,
 });
@@ -560,3 +587,37 @@ export const deleteGoal = async (
     method: "DELETE",
     headers: authHeaders(token),
   });
+
+export const getReportCashflow = async (
+  token: string,
+  budgetId: string,
+  from: string,
+  to: string,
+): Promise<CashflowDay[]> => {
+  const query = new URLSearchParams({ budget_id: budgetId, from, to });
+  return requestJson(`/reports/cashflow?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const getReportBalance = async (
+  token: string,
+  budgetId: string,
+  from: string,
+  to: string,
+): Promise<BalanceDay[]> => {
+  const query = new URLSearchParams({ budget_id: budgetId, from, to });
+  return requestJson(`/reports/balance?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const getReportSummary = async (
+  token: string,
+  budgetId: string,
+): Promise<ReportsSummary> => {
+  const query = new URLSearchParams({ budget_id: budgetId });
+  return requestJson(`/reports/summary?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};

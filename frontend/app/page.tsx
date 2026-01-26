@@ -12,10 +12,13 @@ import {
   type Account,
   type AuthError,
   type Budget,
+  type BalanceDay,
+  type CashflowDay,
   type Category,
   type DailyState,
   type DebtOther,
   type Goal,
+  type ReportsSummary,
   type Transaction,
   authTelegram,
   createAccount,
@@ -31,6 +34,9 @@ import {
   getDailyState,
   getApiBaseUrl,
   getMe,
+  getReportBalance,
+  getReportCashflow,
+  getReportSummary,
   isUnauthorized,
   listAccounts,
   listBudgets,
@@ -77,6 +83,16 @@ const buildErrorMessage = (fallback: string, error: unknown): string => {
   return fallback;
 };
 
+const getDefaultReportRange = (): { from: string; to: string } => {
+  const today = new Date();
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  return {
+    from: monthStart.toISOString().slice(0, 10),
+    to: monthEnd.toISOString().slice(0, 10),
+  };
+};
+
 export default function HomePage() {
   const [status, setStatus] = useState<Status>("loading");
   const [token, setTokenState] = useState<string | null>(null);
@@ -102,6 +118,17 @@ export default function HomePage() {
   const [categoryParent, setCategoryParent] = useState("");
   const [selectedDate, setSelectedDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
+  );
+  const [reportFrom, setReportFrom] = useState(
+    () => getDefaultReportRange().from,
+  );
+  const [reportTo, setReportTo] = useState(
+    () => getDefaultReportRange().to,
+  );
+  const [reportCashflow, setReportCashflow] = useState<CashflowDay[]>([]);
+  const [reportBalance, setReportBalance] = useState<BalanceDay[]>([]);
+  const [reportSummary, setReportSummary] = useState<ReportsSummary | null>(
+    null,
   );
   const [incomeAccountId, setIncomeAccountId] = useState("");
   const [incomeAmount, setIncomeAmount] = useState("");
@@ -365,6 +392,9 @@ export default function HomePage() {
     setGoals([]);
     setDailyState(null);
     setDailyDelta(null);
+    setReportCashflow([]);
+    setReportBalance([]);
+    setReportSummary(null);
     setDailyStateForm({
       cash_total: "",
       bank_total: "",
@@ -430,6 +460,10 @@ export default function HomePage() {
 
   const normalizeGoalRemaining = (goal: Goal) =>
     Math.max(0, goal.target_amount - goal.current_amount);
+
+  const normalizeReportGoalRemaining = (
+    goal: ReportsSummary["goals_active"][number],
+  ) => Math.max(0, goal.target - goal.current);
 
   const getGoalStrategy = (goal: Goal) => {
     if (!goal.deadline || goal.status !== "active") {
@@ -526,6 +560,35 @@ export default function HomePage() {
 
     void loadTransactionsForDate();
   }, [token, activeBudgetId, selectedDate]);
+
+  useEffect(() => {
+    const loadReports = async () => {
+      if (!token || !activeBudgetId) {
+        return;
+      }
+      if (!reportFrom || !reportTo) {
+        return;
+      }
+      if (reportFrom > reportTo) {
+        setMessage("Некорректный период отчета");
+        return;
+      }
+      try {
+        const [cashflow, balance, summary] = await Promise.all([
+          getReportCashflow(token, activeBudgetId, reportFrom, reportTo),
+          getReportBalance(token, activeBudgetId, reportFrom, reportTo),
+          getReportSummary(token, activeBudgetId),
+        ]);
+        setReportCashflow(cashflow);
+        setReportBalance(balance);
+        setReportSummary(summary);
+      } catch (error) {
+        setMessage(buildErrorMessage("Не удалось загрузить отчеты", error));
+      }
+    };
+
+    void loadReports();
+  }, [token, activeBudgetId, reportFrom, reportTo]);
 
   const handleCreateAccount = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1003,6 +1066,119 @@ export default function HomePage() {
                 ))}
               </select>
             </label>
+          </section>
+
+          <section>
+            <h2>Отчёты</h2>
+            <div>
+              <label>
+                Период с:
+                <input
+                  type="date"
+                  value={reportFrom}
+                  onChange={(event) => setReportFrom(event.target.value)}
+                />
+              </label>
+              <label>
+                по:
+                <input
+                  type="date"
+                  value={reportTo}
+                  onChange={(event) => setReportTo(event.target.value)}
+                />
+              </label>
+            </div>
+            <div>
+              <h3>Доходы/расходы по дням</h3>
+              {reportCashflow.length ? (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Дата</th>
+                      <th>Доход</th>
+                      <th>Расход</th>
+                      <th>Итог</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportCashflow.map((row) => (
+                      <tr key={row.date}>
+                        <td>{row.date}</td>
+                        <td>{row.income_total} ₽</td>
+                        <td>{row.expense_total} ₽</td>
+                        <td>{row.net_total} ₽</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p>Нет данных</p>
+              )}
+            </div>
+            <div>
+              <h3>Динамика баланса</h3>
+              {reportBalance.length ? (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Дата</th>
+                      <th>Остаток</th>
+                      <th>Долги</th>
+                      <th>Баланс</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportBalance.map((row) => (
+                      <tr key={row.date}>
+                        <td>{row.date}</td>
+                        <td>{row.assets_total} ₽</td>
+                        <td>{row.debts_total} ₽</td>
+                        <td>{row.balance} ₽</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p>Нет данных</p>
+              )}
+            </div>
+            <div>
+              <h3>Долги сейчас</h3>
+              <p>
+                Кредитки/рассрочки:{" "}
+                {reportSummary?.debt_cards_total ?? 0} ₽
+              </p>
+              <p>Долги людям: {reportSummary?.debt_other_total ?? 0} ₽</p>
+            </div>
+            <div>
+              <h3>Цели (активные)</h3>
+              {reportSummary?.goals_active?.length ? (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Цель</th>
+                      <th>Прогресс</th>
+                      <th>Осталось</th>
+                      <th>Дедлайн</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportSummary.goals_active.map((goal, index) => (
+                      <tr key={`${goal.title}-${index}`}>
+                        <td>{goal.title}</td>
+                        <td>
+                          {goal.current} / {goal.target} ₽
+                        </td>
+                        <td>{normalizeReportGoalRemaining(goal)} ₽</td>
+                        <td>{goal.deadline ?? "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p>Нет активных целей</p>
+              )}
+            </div>
           </section>
 
           <section>
