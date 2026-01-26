@@ -335,3 +335,104 @@ def month_report(user_id: str, budget_id: str, month: str) -> dict[str, Any]:
         "month_net": month_net,
         "avg_net_per_day": avg_net_per_day,
     }
+
+
+def expenses_by_category(
+    user_id: str,
+    budget_id: str,
+    date_from: date,
+    date_to: date,
+    limit: int,
+) -> dict[str, Any]:
+    _ensure_budget_access(user_id, budget_id)
+    client = get_supabase_client()
+    transactions_response = (
+        client.table("transactions")
+        .select("amount, category_id")
+        .eq("type", "expense")
+        .eq("budget_id", budget_id)
+        .eq("user_id", user_id)
+        .gte("date", date_from.isoformat())
+        .lte("date", date_to.isoformat())
+        .execute()
+    )
+    categories_response = (
+        client.table("categories")
+        .select("id, name, parent_id")
+        .eq("budget_id", budget_id)
+        .execute()
+    )
+    categories = {
+        item.get("id"): {
+            "name": item.get("name"),
+            "parent_id": item.get("parent_id"),
+        }
+        for item in (categories_response.data or [])
+        if item.get("id")
+    }
+    totals: dict[str, int] = {}
+    total_expense = 0
+    for item in transactions_response.data or []:
+        category_id = item.get("category_id")
+        if not category_id or category_id not in categories:
+            continue
+        amount = int(item.get("amount", 0))
+        totals[category_id] = totals.get(category_id, 0) + amount
+        total_expense += amount
+
+    children_map: dict[str, list[str]] = {}
+    for category_id, category in categories.items():
+        parent_id = category.get("parent_id")
+        if parent_id:
+            children_map.setdefault(parent_id, []).append(category_id)
+
+    parent_category_ids = [
+        category_id
+        for category_id, category in categories.items()
+        if not category.get("parent_id")
+        or category.get("parent_id") not in categories
+    ]
+
+    items: list[dict[str, Any]] = []
+    for category_id in parent_category_ids:
+        own_total = totals.get(category_id, 0)
+        children_items = []
+        children_total = 0
+        for child_id in children_map.get(category_id, []):
+            child_amount = totals.get(child_id, 0)
+            if child_amount <= 0:
+                continue
+            children_total += child_amount
+            children_items.append(
+                {
+                    "category_id": child_id,
+                    "category_name": categories[child_id]["name"],
+                    "amount": child_amount,
+                }
+            )
+        parent_total = own_total + children_total
+        if parent_total <= 0:
+            continue
+        items.append(
+            {
+                "category_id": category_id,
+                "category_name": categories[category_id]["name"],
+                "amount": parent_total,
+                "children": children_items,
+            }
+        )
+
+    items.sort(key=lambda item: item["amount"], reverse=True)
+    limited_items = items[: max(limit, 0)]
+    if total_expense > 0:
+        for item in limited_items:
+            item["share"] = item["amount"] / total_expense
+            for child in item["children"]:
+                child["share"] = child["amount"] / total_expense
+    else:
+        for item in limited_items:
+            item["share"] = 0
+            for child in item["children"]:
+                child["share"] = 0
+
+    return {"total_expense": total_expense, "items": limited_items}
