@@ -18,6 +18,8 @@ import {
   type Category,
   type DailyState,
   type Goal,
+  type MonthReport,
+  type MonthReportDay,
   type ReconcileSummary,
   type ReportsSummary,
   type Rule,
@@ -37,6 +39,7 @@ import {
   getDailyState,
   getApiBaseUrl,
   getMe,
+  getMonthReport,
   getReconcile,
   getReportBalance,
   getReportCashflow,
@@ -99,8 +102,12 @@ const getDefaultReportRange = (): { from: string; to: string } => {
   };
 };
 
+const getDefaultMonth = (): string =>
+  new Date().toISOString().slice(0, 7);
+
 export default function HomePage() {
   const [status, setStatus] = useState<Status>("loading");
+  const [viewMode, setViewMode] = useState<"day" | "month">("day");
   const [token, setTokenState] = useState<string | null>(null);
   const [message, setMessage] = useState<string>("");
   const [budgets, setBudgets] = useState<Budget[]>([]);
@@ -137,6 +144,10 @@ export default function HomePage() {
   const [reportSummary, setReportSummary] = useState<ReportsSummary | null>(
     null,
   );
+  const [selectedMonth, setSelectedMonth] = useState(() =>
+    getDefaultMonth(),
+  );
+  const [monthReport, setMonthReport] = useState<MonthReport | null>(null);
   const [incomeAccountId, setIncomeAccountId] = useState("");
   const [incomeAmount, setIncomeAmount] = useState("");
   const [incomeNote, setIncomeNote] = useState("");
@@ -242,6 +253,22 @@ export default function HomePage() {
       setReportSummary(summary);
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось загрузить отчеты", error));
+    }
+  };
+
+  const loadMonthReport = async () => {
+    if (!token || !activeBudgetId || !selectedMonth) {
+      return;
+    }
+    try {
+      const report = await getMonthReport(
+        token,
+        activeBudgetId,
+        selectedMonth,
+      );
+      setMonthReport(report);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось загрузить отчет за месяц", error));
     }
   };
 
@@ -450,6 +477,8 @@ export default function HomePage() {
     setReportCashflow([]);
     setReportBalance([]);
     setReportSummary(null);
+    setMonthReport(null);
+    setSelectedMonth(getDefaultMonth());
     setDailyStateForm({
       cash_total: "",
       bank_total: "",
@@ -588,6 +617,18 @@ export default function HomePage() {
   const showExpenseSuggestion =
     expenseSuggestion && expenseSuggestion.confidence >= 0.6;
 
+  const renderMonthReconcileStatus = (diff: number) => {
+    if (Math.abs(diff) <= 1) {
+      return "OK";
+    }
+    return diff > 0 ? `+${diff} ₽` : `${diff} ₽`;
+  };
+
+  const monthIncomeTotal = monthReport?.month_income ?? 0;
+  const monthExpenseTotal = monthReport?.month_expense ?? 0;
+  const monthNetTotal = monthReport?.month_net ?? 0;
+  const monthAvgNet = monthReport?.avg_net_per_day ?? 0;
+
   const renderCategoryTree = (parentId: string | null) => {
     const key = parentId ?? "root";
     const items = categoryMap.get(key) ?? [];
@@ -669,6 +710,10 @@ export default function HomePage() {
   useEffect(() => {
     void loadReports();
   }, [token, activeBudgetId, reportFrom, reportTo]);
+
+  useEffect(() => {
+    void loadMonthReport();
+  }, [token, activeBudgetId, selectedMonth]);
 
   useEffect(() => {
     if (!token || !activeBudgetId) {
@@ -1410,121 +1455,210 @@ export default function HomePage() {
           </section>
 
           <section>
+            <h2>Режим просмотра</h2>
+            <div>
+              <label>
+                <input
+                  type="radio"
+                  name="view-mode"
+                  value="day"
+                  checked={viewMode === "day"}
+                  onChange={() => setViewMode("day")}
+                />
+                День
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="view-mode"
+                  value="month"
+                  checked={viewMode === "month"}
+                  onChange={() => setViewMode("month")}
+                />
+                Месяц
+              </label>
+            </div>
+          </section>
+
+          <section>
             <h2>Отчёты</h2>
-            <div>
-              <label>
-                Период с:
-                <input
-                  type="date"
-                  value={reportFrom}
-                  onChange={(event) => setReportFrom(event.target.value)}
-                />
-              </label>
-              <label>
-                по:
-                <input
-                  type="date"
-                  value={reportTo}
-                  onChange={(event) => setReportTo(event.target.value)}
-                />
-              </label>
-            </div>
-            <div>
-              <h3>Доходы/расходы по дням</h3>
-              {reportCashflow.length ? (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Дата</th>
-                      <th>Доход</th>
-                      <th>Расход</th>
-                      <th>Итог</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reportCashflow.map((row) => (
-                      <tr key={row.date}>
-                        <td>{row.date}</td>
-                        <td>{row.income_total} ₽</td>
-                        <td>{row.expense_total} ₽</td>
-                        <td>{row.net_total} ₽</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <p>Нет данных</p>
-              )}
-            </div>
-            <div>
-              <h3>Динамика баланса</h3>
-              {reportBalance.length ? (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Дата</th>
-                      <th>Остаток</th>
-                      <th>Долги</th>
-                      <th>Баланс</th>
-                      <th>Итог за день</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reportBalance.map((row) => (
-                      <tr key={row.date}>
-                        <td>{row.date}</td>
-                        <td>{row.assets_total} ₽</td>
-                        <td>{row.debts_total} ₽</td>
-                        <td>{row.balance} ₽</td>
-                        <td>
-                          {row.delta_balance >= 0 ? "+" : ""}
-                          {row.delta_balance} ₽
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <p>Нет данных</p>
-              )}
-            </div>
-            <div>
-              <h3>Долги сейчас</h3>
-              <p>
-                Кредитки/рассрочки:{" "}
-                {reportSummary?.debt_cards_total ?? 0} ₽
-              </p>
-              <p>Долги людям: {reportSummary?.debt_other_total ?? 0} ₽</p>
-            </div>
-            <div>
-              <h3>Цели (активные)</h3>
-              {reportSummary?.goals_active?.length ? (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Цель</th>
-                      <th>Прогресс</th>
-                      <th>Осталось</th>
-                      <th>Дедлайн</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reportSummary.goals_active.map((goal, index) => (
-                      <tr key={`${goal.title}-${index}`}>
-                        <td>{goal.title}</td>
-                        <td>
-                          {goal.current} / {goal.target} ₽
-                        </td>
-                        <td>{normalizeReportGoalRemaining(goal)} ₽</td>
-                        <td>{goal.deadline ?? "-"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <p>Нет активных целей</p>
-              )}
-            </div>
+            {viewMode === "day" ? (
+              <>
+                <div>
+                  <h3>Быстрые карточки</h3>
+                  <ul>
+                    <li>Остаток: {assetsTotal} ₽</li>
+                    <li>Долги: {debtsTotal} ₽</li>
+                    <li>Баланс: {balanceTotal} ₽</li>
+                    <li>Итог дня (нижний): {bottomDayTotal} ₽</li>
+                    <li>Итог дня (верхний): {topDayTotal} ₽</li>
+                  </ul>
+                </div>
+                <div>
+                  <label>
+                    Период с:
+                    <input
+                      type="date"
+                      value={reportFrom}
+                      onChange={(event) => setReportFrom(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    по:
+                    <input
+                      type="date"
+                      value={reportTo}
+                      onChange={(event) => setReportTo(event.target.value)}
+                    />
+                  </label>
+                </div>
+                <div>
+                  <h3>Доходы/расходы по дням</h3>
+                  {reportCashflow.length ? (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Дата</th>
+                          <th>Доход</th>
+                          <th>Расход</th>
+                          <th>Итог</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reportCashflow.map((row) => (
+                          <tr key={row.date}>
+                            <td>{row.date}</td>
+                            <td>{row.income_total} ₽</td>
+                            <td>{row.expense_total} ₽</td>
+                            <td>{row.net_total} ₽</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p>Нет данных</p>
+                  )}
+                </div>
+                <div>
+                  <h3>Динамика баланса</h3>
+                  {reportBalance.length ? (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Дата</th>
+                          <th>Остаток</th>
+                          <th>Долги</th>
+                          <th>Баланс</th>
+                          <th>Итог за день</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reportBalance.map((row) => (
+                          <tr key={row.date}>
+                            <td>{row.date}</td>
+                            <td>{row.assets_total} ₽</td>
+                            <td>{row.debts_total} ₽</td>
+                            <td>{row.balance} ₽</td>
+                            <td>
+                              {row.delta_balance >= 0 ? "+" : ""}
+                              {row.delta_balance} ₽
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p>Нет данных</p>
+                  )}
+                </div>
+                <div>
+                  <h3>Долги сейчас</h3>
+                  <p>
+                    Кредитки/рассрочки:{" "}
+                    {reportSummary?.debt_cards_total ?? 0} ₽
+                  </p>
+                  <p>Долги людям: {reportSummary?.debt_other_total ?? 0} ₽</p>
+                </div>
+                <div>
+                  <h3>Цели (активные)</h3>
+                  {reportSummary?.goals_active?.length ? (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Цель</th>
+                          <th>Прогресс</th>
+                          <th>Осталось</th>
+                          <th>Дедлайн</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reportSummary.goals_active.map((goal, index) => (
+                          <tr key={`${goal.title}-${index}`}>
+                            <td>{goal.title}</td>
+                            <td>
+                              {goal.current} / {goal.target} ₽
+                            </td>
+                            <td>{normalizeReportGoalRemaining(goal)} ₽</td>
+                            <td>{goal.deadline ?? "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p>Нет активных целей</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <h3>Быстрые карточки</h3>
+                  <ul>
+                    <li>Доходы: {monthIncomeTotal} ₽</li>
+                    <li>Расходы: {monthExpenseTotal} ₽</li>
+                    <li>Итог месяца: {monthNetTotal} ₽</li>
+                    <li>Средний итог/день: {monthAvgNet} ₽</li>
+                  </ul>
+                </div>
+                <div>
+                  <label>
+                    Месяц:
+                    <input
+                      type="month"
+                      value={selectedMonth}
+                      onChange={(event) => setSelectedMonth(event.target.value)}
+                    />
+                  </label>
+                </div>
+                <div>
+                  <h3>Дни месяца</h3>
+                  {monthReport?.days?.length ? (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Дата</th>
+                          <th>Верхний итог</th>
+                          <th>Нижний итог</th>
+                          <th>Сверка</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {monthReport.days.map((row: MonthReportDay) => (
+                          <tr key={row.date}>
+                            <td>{row.date}</td>
+                            <td>{row.top_total} ₽</td>
+                            <td>{row.bottom_total} ₽</td>
+                            <td>{renderMonthReconcileStatus(row.diff)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p>Нет данных</p>
+                  )}
+                </div>
+              </>
+            )}
           </section>
 
           <section>
@@ -1582,128 +1716,134 @@ export default function HomePage() {
             )}
           </section>
 
-          <section>
-            <h2>Состояние дня (верхняя таблица)</h2>
-            <div>
-              <label>
-                Наличка:
-                <input
-                  type="number"
-                  min="0"
-                  value={dailyStateForm.cash_total}
-                  onChange={(event) =>
-                    handleDailyStateChange("cash_total", event.target.value)
-                  }
-                />
-              </label>
-              <label>
-                Безнал:
-                <input
-                  type="number"
-                  min="0"
-                  value={dailyStateForm.bank_total}
-                  onChange={(event) =>
-                    handleDailyStateChange("bank_total", event.target.value)
-                  }
-                />
-              </label>
-              <label>
-                Кредитки/рассрочки:
-                <input
-                  type="number"
-                  min="0"
-                  value={dailyStateForm.debt_cards_total}
-                  onChange={(event) =>
-                    handleDailyStateChange(
-                      "debt_cards_total",
-                      event.target.value,
-                    )
-                  }
-                />
-              </label>
-              <label>
-                Долги людям:
-                <input
-                  type="number"
-                  min="0"
-                  value={dailyStateForm.debt_other_total}
-                  readOnly
-                />
-              </label>
-            </div>
-            <p>Остаток: {assetsTotal} ₽</p>
-            <p>Долги: {debtsTotal} ₽</p>
-            <p>Баланс: {balanceTotal} ₽</p>
-            <p>Итог за день (верхний): {topDayTotal} ₽</p>
-            <button type="button" onClick={handleSaveDailyState}>
-              Сохранить состояние дня
-            </button>
-          </section>
+          {viewMode === "day" && (
+            <>
+              <section>
+                <h2>Состояние дня (верхняя таблица)</h2>
+                <div>
+                  <label>
+                    Наличка:
+                    <input
+                      type="number"
+                      min="0"
+                      value={dailyStateForm.cash_total}
+                      onChange={(event) =>
+                        handleDailyStateChange("cash_total", event.target.value)
+                      }
+                    />
+                  </label>
+                  <label>
+                    Безнал:
+                    <input
+                      type="number"
+                      min="0"
+                      value={dailyStateForm.bank_total}
+                      onChange={(event) =>
+                        handleDailyStateChange("bank_total", event.target.value)
+                      }
+                    />
+                  </label>
+                  <label>
+                    Кредитки/рассрочки:
+                    <input
+                      type="number"
+                      min="0"
+                      value={dailyStateForm.debt_cards_total}
+                      onChange={(event) =>
+                        handleDailyStateChange(
+                          "debt_cards_total",
+                          event.target.value,
+                        )
+                      }
+                    />
+                  </label>
+                  <label>
+                    Долги людям:
+                    <input
+                      type="number"
+                      min="0"
+                      value={dailyStateForm.debt_other_total}
+                      readOnly
+                    />
+                  </label>
+                </div>
+                <p>Остаток: {assetsTotal} ₽</p>
+                <p>Долги: {debtsTotal} ₽</p>
+                <p>Баланс: {balanceTotal} ₽</p>
+                <p>Итог за день (верхний): {topDayTotal} ₽</p>
+                <button type="button" onClick={handleSaveDailyState}>
+                  Сохранить состояние дня
+                </button>
+              </section>
 
-          <section>
-            <h2>Долги людям</h2>
-            <form onSubmit={handleCreateDebtOther}>
-              <label>
-                Направление:
-                <select
-                  value={debtOtherDirection}
-                  onChange={(event) =>
-                    setDebtOtherDirection(
-                      event.target.value as "borrowed" | "repaid",
-                    )
-                  }
-                >
-                  <option value="borrowed">Взял в долг</option>
-                  <option value="repaid">Отдал долг</option>
-                </select>
-              </label>
-              <label>
-                Куда пришли/откуда ушли:
-                <select
-                  value={debtOtherAssetSide}
-                  onChange={(event) =>
-                    setDebtOtherAssetSide(
-                      event.target.value as "cash" | "bank",
-                    )
-                  }
-                >
-                  <option value="cash">Наличка</option>
-                  <option value="bank">Безнал</option>
-                </select>
-              </label>
-              <label>
-                Сумма:
-                <input
-                  type="number"
-                  min="1"
-                  value={debtOtherAmount}
-                  onChange={(event) => setDebtOtherAmount(event.target.value)}
-                  required
-                />
-              </label>
-              <label>
-                Дата:
-                <input
-                  type="date"
-                  value={selectedDate}
-                  readOnly
-                />
-              </label>
-              <button type="submit">Сохранить</button>
-            </form>
-            {debtOtherErrorDetails && (
-              <div>
-                <p>
-                  debt_http_status:{" "}
-                  {debtOtherErrorDetails.httpStatus ?? "unknown"}
-                </p>
-                <p>
-                  debt_response_text:{" "}
-                  {debtOtherErrorDetails.responseText ?? "unknown"}
-                </p>
-              </div>
-            )}
-          </section>
+              <section>
+                <h2>Долги людям</h2>
+                <form onSubmit={handleCreateDebtOther}>
+                  <label>
+                    Направление:
+                    <select
+                      value={debtOtherDirection}
+                      onChange={(event) =>
+                        setDebtOtherDirection(
+                          event.target.value as "borrowed" | "repaid",
+                        )
+                      }
+                    >
+                      <option value="borrowed">Взял в долг</option>
+                      <option value="repaid">Отдал долг</option>
+                    </select>
+                  </label>
+                  <label>
+                    Куда пришли/откуда ушли:
+                    <select
+                      value={debtOtherAssetSide}
+                      onChange={(event) =>
+                        setDebtOtherAssetSide(
+                          event.target.value as "cash" | "bank",
+                        )
+                      }
+                    >
+                      <option value="cash">Наличка</option>
+                      <option value="bank">Безнал</option>
+                    </select>
+                  </label>
+                  <label>
+                    Сумма:
+                    <input
+                      type="number"
+                      min="1"
+                      value={debtOtherAmount}
+                      onChange={(event) =>
+                        setDebtOtherAmount(event.target.value)
+                      }
+                      required
+                    />
+                  </label>
+                  <label>
+                    Дата:
+                    <input
+                      type="date"
+                      value={selectedDate}
+                      readOnly
+                    />
+                  </label>
+                  <button type="submit">Сохранить</button>
+                </form>
+                {debtOtherErrorDetails && (
+                  <div>
+                    <p>
+                      debt_http_status:{" "}
+                      {debtOtherErrorDetails.httpStatus ?? "unknown"}
+                    </p>
+                    <p>
+                      debt_response_text:{" "}
+                      {debtOtherErrorDetails.responseText ?? "unknown"}
+                    </p>
+                  </div>
+                )}
+              </section>
+            </>
+          )}
 
           <section>
             <h2>Цели</h2>
@@ -1808,168 +1948,174 @@ export default function HomePage() {
             </form>
           </section>
 
-          <section>
-            <h2>Операции за день</h2>
-            <label>
-              Дата:
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(event) => setSelectedDate(event.target.value)}
-              />
-            </label>
-            {transactions.length ? (
-              <ul>
-                {transactions.map((tx) => {
-                  const accountName =
-                    (tx.account_id && accountMap.get(tx.account_id)?.name) ||
-                    "Счет";
-                  const toAccountName =
-                    (tx.to_account_id &&
-                      accountMap.get(tx.to_account_id)?.name) ||
-                    "Счет";
-                  const categoryName =
-                    (tx.category_id &&
-                      categories.find((cat) => cat.id === tx.category_id)
-                        ?.name) ||
-                    null;
-                  return (
-                    <li key={tx.id}>
-                      <div>
-                        <strong>{tx.type}</strong>: {tx.amount} ₽{" "}
-                        {tx.type === "transfer" && (
-                          <span>
-                            {accountName} → {toAccountName}
-                          </span>
-                        )}
-                        {tx.type !== "transfer" && <span>{accountName}</span>}
-                        {tx.type === "expense" && (
-                          <span>
-                            {" "}
-                            {categoryName ? `(${categoryName})` : "(Без категории)"}
-                          </span>
-                        )}
-                        {tx.note && <span> — {tx.note}</span>}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteTransaction(tx.id)}
-                      >
-                        Удалить
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <p>Нет операций</p>
-            )}
-            <p>Итог за день (нижний): {bottomDayTotal} ₽</p>
-          </section>
-
-          <section>
-            <h2>Сверка</h2>
-            {dailyState?.is_carried && (
-              <p style={{ fontSize: "12px", opacity: 0.7 }}>
-                Состояние подтянуто из {dailyState.as_of_date}. Изменения
-                сохранятся на выбранную дату.
-              </p>
-            )}
-            <p style={{ fontSize: "12px", opacity: 0.7 }}>
-              lastQuickAdjustClick: {lastQuickAdjustClick || "—"}
-            </p>
-            <p>
-              Верхний итог: {topDayTotal} ₽, Нижний итог: {bottomDayTotal} ₽,
-              Разница: {reconcileDiff} ₽
-            </p>
-            {isReconciled ? (
-              <p>Сверка: OK</p>
-            ) : (
-              <>
-                <p>Сверка: расхождение {reconcileDiffAbs} ₽</p>
-                <p>
-                  {reconcileDiff > 1
-                    ? "Остатки больше, чем операции. Нужна корректировка."
-                    : "Остатки меньше, чем операции. Нужна корректировка."}
-                </p>
-                <div>
-                  {reconcileDiff > 1 && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={(event) =>
-                          handleQuickAdjust(
-                            event,
-                            "cash_total",
-                            -reconcileDiffAbs,
-                          )
-                        }
-                        disabled={isQuickAdjusting}
-                      >
-                        Уменьшить наличку на {reconcileDiffAbs} ₽
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) =>
-                          handleQuickAdjust(
-                            event,
-                            "bank_total",
-                            -reconcileDiffAbs,
-                          )
-                        }
-                        disabled={isQuickAdjusting}
-                      >
-                        Уменьшить безнал на {reconcileDiffAbs} ₽
-                      </button>
-                    </>
-                  )}
-                  {reconcileDiff < -1 && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={(event) =>
-                          handleQuickAdjust(
-                            event,
-                            "cash_total",
-                            reconcileDiffAbs,
-                          )
-                        }
-                        disabled={isQuickAdjusting}
-                      >
-                        Увеличить наличку на {reconcileDiffAbs} ₽
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) =>
-                          handleQuickAdjust(
-                            event,
-                            "bank_total",
-                            reconcileDiffAbs,
-                          )
-                        }
-                        disabled={isQuickAdjusting}
-                      >
-                        Увеличить безнал на {reconcileDiffAbs} ₽
-                      </button>
-                    </>
-                  )}
-                </div>
-                {quickAdjustErrorDetails && (
-                  <div>
-                    <p>
-                      http_status:{" "}
-                      {quickAdjustErrorDetails.httpStatus ?? "unknown"}
-                    </p>
-                    <p>
-                      response_text:{" "}
-                      {quickAdjustErrorDetails.responseText ?? "unknown"}
-                    </p>
-                  </div>
+          {viewMode === "day" && (
+            <>
+              <section>
+                <h2>Операции за день</h2>
+                <label>
+                  Дата:
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(event) => setSelectedDate(event.target.value)}
+                  />
+                </label>
+                {transactions.length ? (
+                  <ul>
+                    {transactions.map((tx) => {
+                      const accountName =
+                        (tx.account_id && accountMap.get(tx.account_id)?.name) ||
+                        "Счет";
+                      const toAccountName =
+                        (tx.to_account_id &&
+                          accountMap.get(tx.to_account_id)?.name) ||
+                        "Счет";
+                      const categoryName =
+                        (tx.category_id &&
+                          categories.find((cat) => cat.id === tx.category_id)
+                            ?.name) ||
+                        null;
+                      return (
+                        <li key={tx.id}>
+                          <div>
+                            <strong>{tx.type}</strong>: {tx.amount} ₽{" "}
+                            {tx.type === "transfer" && (
+                              <span>
+                                {accountName} → {toAccountName}
+                              </span>
+                            )}
+                            {tx.type !== "transfer" && <span>{accountName}</span>}
+                            {tx.type === "expense" && (
+                              <span>
+                                {" "}
+                                {categoryName
+                                  ? `(${categoryName})`
+                                  : "(Без категории)"}
+                              </span>
+                            )}
+                            {tx.note && <span> — {tx.note}</span>}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTransaction(tx.id)}
+                          >
+                            Удалить
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p>Нет операций</p>
                 )}
-                {quickAdjustError && <p>{quickAdjustError}</p>}
-              </>
-            )}
-          </section>
+                <p>Итог за день (нижний): {bottomDayTotal} ₽</p>
+              </section>
+
+              <section>
+                <h2>Сверка</h2>
+                {dailyState?.is_carried && (
+                  <p style={{ fontSize: "12px", opacity: 0.7 }}>
+                    Состояние подтянуто из {dailyState.as_of_date}. Изменения
+                    сохранятся на выбранную дату.
+                  </p>
+                )}
+                <p style={{ fontSize: "12px", opacity: 0.7 }}>
+                  lastQuickAdjustClick: {lastQuickAdjustClick || "—"}
+                </p>
+                <p>
+                  Верхний итог: {topDayTotal} ₽, Нижний итог: {bottomDayTotal} ₽,
+                  Разница: {reconcileDiff} ₽
+                </p>
+                {isReconciled ? (
+                  <p>Сверка: OK</p>
+                ) : (
+                  <>
+                    <p>Сверка: расхождение {reconcileDiffAbs} ₽</p>
+                    <p>
+                      {reconcileDiff > 1
+                        ? "Остатки больше, чем операции. Нужна корректировка."
+                        : "Остатки меньше, чем операции. Нужна корректировка."}
+                    </p>
+                    <div>
+                      {reconcileDiff > 1 && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={(event) =>
+                              handleQuickAdjust(
+                                event,
+                                "cash_total",
+                                -reconcileDiffAbs,
+                              )
+                            }
+                            disabled={isQuickAdjusting}
+                          >
+                            Уменьшить наличку на {reconcileDiffAbs} ₽
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) =>
+                              handleQuickAdjust(
+                                event,
+                                "bank_total",
+                                -reconcileDiffAbs,
+                              )
+                            }
+                            disabled={isQuickAdjusting}
+                          >
+                            Уменьшить безнал на {reconcileDiffAbs} ₽
+                          </button>
+                        </>
+                      )}
+                      {reconcileDiff < -1 && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={(event) =>
+                              handleQuickAdjust(
+                                event,
+                                "cash_total",
+                                reconcileDiffAbs,
+                              )
+                            }
+                            disabled={isQuickAdjusting}
+                          >
+                            Увеличить наличку на {reconcileDiffAbs} ₽
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) =>
+                              handleQuickAdjust(
+                                event,
+                                "bank_total",
+                                reconcileDiffAbs,
+                              )
+                            }
+                            disabled={isQuickAdjusting}
+                          >
+                            Увеличить безнал на {reconcileDiffAbs} ₽
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    {quickAdjustErrorDetails && (
+                      <div>
+                        <p>
+                          http_status:{" "}
+                          {quickAdjustErrorDetails.httpStatus ?? "unknown"}
+                        </p>
+                        <p>
+                          response_text:{" "}
+                          {quickAdjustErrorDetails.responseText ?? "unknown"}
+                        </p>
+                      </div>
+                    )}
+                    {quickAdjustError && <p>{quickAdjustError}</p>}
+                  </>
+                )}
+              </section>
+            </>
+          )}
 
           <section>
             <h2>Добавить доход</h2>
