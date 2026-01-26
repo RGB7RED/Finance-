@@ -1558,6 +1558,12 @@ export default function HomePage() {
 
           <section>
             <h2>Сверка</h2>
+            {dailyState?.is_carried && (
+              <p style={{ fontSize: "12px", opacity: 0.7 }}>
+                Состояние подтянуто из {dailyState.as_of_date}. Изменения
+                сохранятся на выбранную дату.
+              </p>
+            )}
             <p style={{ fontSize: "12px", opacity: 0.7 }}>
               lastQuickAdjustClick: {lastQuickAdjustClick || "—"}
             </p>
