@@ -6,6 +6,7 @@ import {
   useState,
   type ChangeEvent,
   type FormEvent,
+  type MouseEvent,
 } from "react";
 
 import {
@@ -167,6 +168,9 @@ export default function HomePage() {
     useState<FormErrorDetails | null>(null);
   const [debtOtherErrorDetails, setDebtOtherErrorDetails] =
     useState<FormErrorDetails | null>(null);
+  const [quickAdjustErrorDetails, setQuickAdjustErrorDetails] =
+    useState<FormErrorDetails | null>(null);
+  const [isQuickAdjusting, setIsQuickAdjusting] = useState(false);
 
   const setDailyStateFromData = (state: DailyState) => {
     setDailyState(state);
@@ -952,10 +956,15 @@ export default function HomePage() {
   };
 
   const handleQuickAdjust = async (
+    event: MouseEvent<HTMLButtonElement>,
     field: "cash_total" | "bank_total",
     delta: number,
   ) => {
+    event.preventDefault();
     if (!token || !activeBudgetId) {
+      return;
+    }
+    if (isQuickAdjusting) {
       return;
     }
     const currentValue = parseAmount(dailyStateForm[field]);
@@ -965,6 +974,8 @@ export default function HomePage() {
       return;
     }
     setMessage("");
+    setQuickAdjustErrorDetails(null);
+    setIsQuickAdjusting(true);
     try {
       await updateDailyState(token, {
         budget_id: activeBudgetId,
@@ -974,7 +985,14 @@ export default function HomePage() {
       await loadDailyStateData(token, activeBudgetId, selectedDate);
       await loadReports();
     } catch (error) {
+      const apiError = error as Error & { status?: number; text?: string };
+      setQuickAdjustErrorDetails({
+        httpStatus: apiError.status,
+        responseText: apiError.text,
+      });
       setMessage(buildErrorMessage("Не удалось обновить состояние дня", error));
+    } finally {
+      setIsQuickAdjusting(false);
     }
   };
 
@@ -1521,31 +1539,53 @@ export default function HomePage() {
                 <div>
                   <button
                     type="button"
-                    onClick={() => handleQuickAdjust("cash_total", -dayDiffAbs)}
+                    onClick={(event) =>
+                      handleQuickAdjust(event, "cash_total", -dayDiffAbs)
+                    }
+                    disabled={isQuickAdjusting}
                   >
                     Уменьшить наличку на {dayDiffAbs} ₽
                   </button>
                   <button
                     type="button"
-                    onClick={() =>
-                      handleQuickAdjust("bank_total", -dayDiffAbs)
+                    onClick={(event) =>
+                      handleQuickAdjust(event, "bank_total", -dayDiffAbs)
                     }
+                    disabled={isQuickAdjusting}
                   >
                     Уменьшить безнал на {dayDiffAbs} ₽
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleQuickAdjust("cash_total", dayDiffAbs)}
+                    onClick={(event) =>
+                      handleQuickAdjust(event, "cash_total", dayDiffAbs)
+                    }
+                    disabled={isQuickAdjusting}
                   >
                     Увеличить наличку на {dayDiffAbs} ₽
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleQuickAdjust("bank_total", dayDiffAbs)}
+                    onClick={(event) =>
+                      handleQuickAdjust(event, "bank_total", dayDiffAbs)
+                    }
+                    disabled={isQuickAdjusting}
                   >
                     Увеличить безнал на {dayDiffAbs} ₽
                   </button>
                 </div>
+                {quickAdjustErrorDetails && (
+                  <div>
+                    <p>
+                      http_status:{" "}
+                      {quickAdjustErrorDetails.httpStatus ?? "unknown"}
+                    </p>
+                    <p>
+                      response_text:{" "}
+                      {quickAdjustErrorDetails.responseText ?? "unknown"}
+                    </p>
+                  </div>
+                )}
               </>
             )}
           </section>
