@@ -18,7 +18,6 @@ from app.repositories.categories import create_category, list_categories
 from app.repositories.daily_state import (
     get_delta,
     get_state_as_of,
-    get_state_or_default,
     upsert_with_base,
 )
 from app.repositories.debts_other import (
@@ -93,6 +92,8 @@ class DailyStateOut(BaseModel):
     budget_id: str
     user_id: str
     date: dt.date
+    as_of_date: dt.date
+    is_carried: bool
     cash_total: int
     bank_total: int
     debt_cards_total: int
@@ -298,7 +299,13 @@ def post_debts_other(
             "debt_other_total": debt_other_total,
         },
     )
-    return DailyStateOut(**updated)
+    return DailyStateOut(
+        **{
+            **updated,
+            "as_of_date": target_date,
+            "is_carried": False,
+        }
+    )
 
 
 @router.delete("/debts/other/{debt_id}")
@@ -315,7 +322,7 @@ def get_daily_state(
     date: dt.date,
     current_user: dict = Depends(get_current_user),
 ) -> DailyStateOut:
-    record = get_state_or_default(current_user["sub"], budget_id, date)
+    record = get_state_as_of(current_user["sub"], budget_id, date)
     return DailyStateOut(**record)
 
 
@@ -332,7 +339,13 @@ def put_daily_state(
         payload.date,
         fields,
     )
-    return DailyStateOut(**record)
+    return DailyStateOut(
+        **{
+            **record,
+            "as_of_date": payload.date,
+            "is_carried": False,
+        }
+    )
 
 
 @router.get("/daily-state/delta")
