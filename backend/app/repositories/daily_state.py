@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 from postgrest.exceptions import APIError
 
 from app.integrations.supabase_client import get_supabase_client
+from app.repositories.daily_account_balances import totals_for_date
 
 
 def _ensure_budget_access(user_id: str, budget_id: str) -> None:
@@ -101,6 +102,64 @@ def get_state_or_default(
             "debt_other_total": 0,
         }
     return {**record, **_calculate_totals(record)}
+
+
+def get_debts(
+    user_id: str, budget_id: str, target_date: date
+) -> dict[str, int]:
+    record = get_state(user_id, budget_id, target_date)
+    if record is None:
+        return {"debt_cards_total": 0, "debt_other_total": 0}
+    return {
+        "debt_cards_total": int(record.get("debt_cards_total", 0)),
+        "debt_other_total": int(record.get("debt_other_total", 0)),
+    }
+
+
+def upsert_debts(
+    user_id: str,
+    budget_id: str,
+    target_date: date,
+    credit_cards: int | None = None,
+    people_debts: int | None = None,
+) -> dict[str, Any]:
+    _ensure_budget_access(user_id, budget_id)
+    existing = get_state(user_id, budget_id, target_date) or {}
+    cash_total = int(existing.get("cash_total", 0))
+    bank_total = int(existing.get("bank_total", 0))
+    debt_cards_total = int(existing.get("debt_cards_total", 0))
+    debt_other_total = int(existing.get("debt_other_total", 0))
+    if credit_cards is not None:
+        debt_cards_total = int(credit_cards)
+    if people_debts is not None:
+        debt_other_total = int(people_debts)
+    if debt_cards_total < 0 or debt_other_total < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Значение не может быть меньше 0",
+        )
+    payload = {
+        "budget_id": budget_id,
+        "user_id": user_id,
+        "date": target_date.isoformat(),
+        "cash_total": cash_total,
+        "bank_total": bank_total,
+        "debt_cards_total": debt_cards_total,
+        "debt_other_total": debt_other_total,
+    }
+    client = get_supabase_client()
+    try:
+        response = (
+            client.table("daily_state")
+            .upsert(payload, on_conflict="budget_id,date")
+            .execute()
+        )
+    except APIError as exc:
+        _raise_postgrest_http_error(exc)
+    data = response.data or []
+    if not data:
+        raise RuntimeError("Failed to update daily debts")
+    return data[0]
 
 
 def _totals_from_record(record: dict[str, Any]) -> dict[str, int]:
@@ -347,12 +406,31 @@ def update_with_propagation(
 
 
 def get_balance(user_id: str, budget_id: str, target_date: date) -> int:
-    record = get_state_or_default(user_id, budget_id, target_date)
-    return int(record["balance"])
+    balance, _ = get_balance_for_date(user_id, budget_id, target_date)
+    return balance
+
+
+def get_balance_for_date(
+    user_id: str, budget_id: str, target_date: date
+) -> tuple[int, bool]:
+    totals, has_assets = totals_for_date(user_id, budget_id, target_date)
+    debts = get_debts(user_id, budget_id, target_date)
+    debts_total = int(debts.get("debt_cards_total", 0)) + int(
+        debts.get("debt_other_total", 0)
+    )
+    balance = totals["assets_total"] - debts_total
+    has_data = has_assets or debts_total != 0
+    return balance, has_data
 
 
 def get_delta(user_id: str, budget_id: str, target_date: date) -> int:
-    current = get_state_or_default(user_id, budget_id, target_date)
+    current_balance, current_has_data = get_balance_for_date(
+        user_id, budget_id, target_date
+    )
     previous_date = target_date - timedelta(days=1)
-    previous = get_state_or_default(user_id, budget_id, previous_date)
-    return int(current["balance"]) - int(previous["balance"])
+    previous_balance, previous_has_data = get_balance_for_date(
+        user_id, budget_id, previous_date
+    )
+    if not current_has_data or not previous_has_data:
+        return 0
+    return current_balance - previous_balance

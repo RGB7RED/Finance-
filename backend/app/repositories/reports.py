@@ -6,7 +6,11 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.integrations.supabase_client import get_supabase_client
-from app.repositories.daily_state import get_state_as_of, get_state_or_default
+from app.repositories.accounts import list_accounts
+from app.repositories.daily_state import (
+    get_balance_for_date,
+    get_state_or_default,
+)
 
 
 def _ensure_budget_access(user_id: str, budget_id: str) -> None:
@@ -89,11 +93,9 @@ def balance_by_day(
 ) -> list[dict[str, Any]]:
     _ensure_budget_access(user_id, budget_id)
     client = get_supabase_client()
-    response = (
+    debts_response = (
         client.table("daily_state")
-        .select(
-            "date, cash_total, bank_total, debt_cards_total, debt_other_total"
-        )
+        .select("date, debt_cards_total, debt_other_total")
         .eq("budget_id", budget_id)
         .eq("user_id", user_id)
         .gte("date", date_from.isoformat())
@@ -101,35 +103,57 @@ def balance_by_day(
         .order("date")
         .execute()
     )
-    records = {item.get("date"): item for item in response.data or []}
+    debts_records = {item.get("date"): item for item in debts_response.data or []}
+    accounts = list_accounts(user_id, budget_id)
+    account_kind = {
+        account["id"]: account.get("kind") for account in accounts
+    }
+    balances_response = (
+        client.table("daily_account_balances")
+        .select("date, account_id, amount")
+        .eq("budget_id", budget_id)
+        .eq("user_id", user_id)
+        .gte("date", date_from.isoformat())
+        .lte("date", date_to.isoformat())
+        .execute()
+    )
+    totals_by_date: dict[str, dict[str, int]] = {
+        day.isoformat(): {"cash_total": 0, "noncash_total": 0}
+        for day in _date_range(date_from, date_to)
+    }
+    for item in balances_response.data or []:
+        tx_date = item.get("date")
+        account_id = item.get("account_id")
+        if not tx_date or tx_date not in totals_by_date:
+            continue
+        kind = account_kind.get(account_id)
+        amount = int(item.get("amount", 0))
+        if kind == "cash":
+            totals_by_date[tx_date]["cash_total"] += amount
+        else:
+            totals_by_date[tx_date]["noncash_total"] += amount
     result = []
     last_state: dict[str, int] | None = None
     last_balance = 0
     for day in _date_range(date_from, date_to):
         key = day.isoformat()
-        record = records.get(key)
+        record = debts_records.get(key)
         if record:
-            cash_total = int(record.get("cash_total", 0))
-            bank_total = int(record.get("bank_total", 0))
             debt_cards_total = int(record.get("debt_cards_total", 0))
             debt_other_total = int(record.get("debt_other_total", 0))
             last_state = {
-                "cash_total": cash_total,
-                "bank_total": bank_total,
                 "debt_cards_total": debt_cards_total,
                 "debt_other_total": debt_other_total,
             }
         elif last_state is not None:
-            cash_total = last_state["cash_total"]
-            bank_total = last_state["bank_total"]
             debt_cards_total = last_state["debt_cards_total"]
             debt_other_total = last_state["debt_other_total"]
         else:
-            cash_total = 0
-            bank_total = 0
             debt_cards_total = 0
             debt_other_total = 0
-        assets_total = cash_total + bank_total
+        cash_total = totals_by_date[key]["cash_total"]
+        noncash_total = totals_by_date[key]["noncash_total"]
+        assets_total = cash_total + noncash_total
         debts_total = debt_cards_total + debt_other_total
         balance = assets_total - debts_total
         delta_balance = balance - last_balance
@@ -176,8 +200,8 @@ def summary(user_id: str, budget_id: str) -> dict[str, Any]:
 
 
 def balance_as_of_date(user_id: str, budget_id: str, target_date: date) -> int:
-    state = get_state_as_of(user_id, budget_id, target_date)
-    return int(state.get("balance", 0))
+    balance, _ = get_balance_for_date(user_id, budget_id, target_date)
+    return balance
 
 
 def reconcile_by_date(
@@ -201,11 +225,13 @@ def reconcile_by_date(
             bottom_total += amount
         elif tx_type == "expense":
             bottom_total -= amount
-    balance_today = balance_as_of_date(user_id, budget_id, target_date)
-    balance_prev = balance_as_of_date(
+    balance_today, has_today = get_balance_for_date(
+        user_id, budget_id, target_date
+    )
+    balance_prev, has_prev = get_balance_for_date(
         user_id, budget_id, target_date - timedelta(days=1)
     )
-    top_total = balance_today - balance_prev
+    top_total = balance_today - balance_prev if has_today and has_prev else 0
     diff = top_total - bottom_total
     return {
         "date": target_date.isoformat(),
@@ -246,16 +272,26 @@ def month_report(user_id: str, budget_id: str, month: str) -> dict[str, Any]:
     )
 
     start_day = date_from - timedelta(days=1)
+    accounts = list_accounts(user_id, budget_id)
+    account_kind = {
+        account["id"]: account.get("kind") for account in accounts
+    }
     balance_response = (
-        client.table("daily_state")
-        .select(
-            "date, cash_total, bank_total, debt_cards_total, debt_other_total"
-        )
+        client.table("daily_account_balances")
+        .select("date, account_id, amount")
         .eq("budget_id", budget_id)
         .eq("user_id", user_id)
         .gte("date", start_day.isoformat())
         .lt("date", date_to.isoformat())
-        .order("date")
+        .execute()
+    )
+    debts_response = (
+        client.table("daily_state")
+        .select("date, debt_cards_total, debt_other_total")
+        .eq("budget_id", budget_id)
+        .eq("user_id", user_id)
+        .gte("date", start_day.isoformat())
+        .lt("date", date_to.isoformat())
         .execute()
     )
 
@@ -276,8 +312,23 @@ def month_report(user_id: str, budget_id: str, month: str) -> dict[str, Any]:
         elif tx_type == "expense":
             cashflow_totals[tx_date]["expense_total"] += amount
 
-    balance_records = {
-        item.get("date"): item for item in balance_response.data or []
+    balance_records: dict[str, dict[str, int]] = {}
+    for item in balance_response.data or []:
+        record_date = item.get("date")
+        account_id = item.get("account_id")
+        if not record_date:
+            continue
+        entry = balance_records.setdefault(
+            record_date, {"cash_total": 0, "noncash_total": 0}
+        )
+        kind = account_kind.get(account_id)
+        amount = int(item.get("amount", 0))
+        if kind == "cash":
+            entry["cash_total"] += amount
+        else:
+            entry["noncash_total"] += amount
+    debt_records = {
+        item.get("date"): item for item in debts_response.data or []
     }
 
     month_income = 0
@@ -295,18 +346,23 @@ def month_report(user_id: str, budget_id: str, month: str) -> dict[str, Any]:
         prev_state = balance_records.get(
             (day - timedelta(days=1)).isoformat()
         )
+        today_debts = debt_records.get(key, {})
+        prev_debts = debt_records.get(
+            (day - timedelta(days=1)).isoformat(),
+            {},
+        )
         if today_state and prev_state:
             today_balance = (
                 int(today_state.get("cash_total", 0))
-                + int(today_state.get("bank_total", 0))
-                - int(today_state.get("debt_cards_total", 0))
-                - int(today_state.get("debt_other_total", 0))
+                + int(today_state.get("noncash_total", 0))
+                - int(today_debts.get("debt_cards_total", 0))
+                - int(today_debts.get("debt_other_total", 0))
             )
             prev_balance = (
                 int(prev_state.get("cash_total", 0))
-                + int(prev_state.get("bank_total", 0))
-                - int(prev_state.get("debt_cards_total", 0))
-                - int(prev_state.get("debt_other_total", 0))
+                + int(prev_state.get("noncash_total", 0))
+                - int(prev_debts.get("debt_cards_total", 0))
+                - int(prev_debts.get("debt_other_total", 0))
             )
             top_total = today_balance - prev_balance
         else:

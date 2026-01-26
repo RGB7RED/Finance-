@@ -7,7 +7,6 @@ import {
   useState,
   type ChangeEvent,
   type FormEvent,
-  type MouseEvent,
 } from "react";
 
 import {
@@ -18,6 +17,7 @@ import {
   type CashflowDay,
   type Category,
   type DailyState,
+  type DailyStateAccount,
   type ExpensesByCategoryReport,
   type Goal,
   type MonthReport,
@@ -124,11 +124,12 @@ export default function HomePage() {
   const [reconcileSummary, setReconcileSummary] =
     useState<ReconcileSummary | null>(null);
   const [dailyStateForm, setDailyStateForm] = useState({
-    cash_total: "",
-    bank_total: "",
     debt_cards_total: "",
     debt_other_total: "",
   });
+  const [dailyStateAccounts, setDailyStateAccounts] = useState<
+    (DailyStateAccount & { amountText: string })[]
+  >([]);
   const [accountName, setAccountName] = useState("");
   const [accountKind, setAccountKind] = useState("cash");
   const [categoryName, setCategoryName] = useState("");
@@ -215,11 +216,15 @@ export default function HomePage() {
   const setDailyStateFromData = (state: DailyState) => {
     setDailyState(state);
     setDailyStateForm({
-      cash_total: String(state.cash_total ?? 0),
-      bank_total: String(state.bank_total ?? 0),
-      debt_cards_total: String(state.debt_cards_total ?? 0),
-      debt_other_total: String(state.debt_other_total ?? 0),
+      debt_cards_total: String(state.debts?.credit_cards ?? 0),
+      debt_other_total: String(state.debts?.people_debts ?? 0),
     });
+    setDailyStateAccounts(
+      state.accounts.map((account) => ({
+        ...account,
+        amountText: String(account.amount ?? 0),
+      })),
+    );
   };
 
   const parseAmount = (value: string): number => {
@@ -498,11 +503,10 @@ export default function HomePage() {
     setMonthReport(null);
     setSelectedMonth(getDefaultMonth());
     setDailyStateForm({
-      cash_total: "",
-      bank_total: "",
       debt_cards_total: "",
       debt_other_total: "",
     });
+    setDailyStateAccounts([]);
     setDebtOtherAmount("");
     setDebtOtherDirection("borrowed");
     setDebtOtherAssetSide("cash");
@@ -583,12 +587,27 @@ export default function HomePage() {
     }, 0);
   }, [transactions]);
 
+  const cashTotal = useMemo(() => {
+    return dailyStateAccounts.reduce((total, account) => {
+      if (account.kind === "cash") {
+        return total + parseAmount(account.amountText);
+      }
+      return total;
+    }, 0);
+  }, [dailyStateAccounts]);
+
+  const noncashTotal = useMemo(() => {
+    return dailyStateAccounts.reduce((total, account) => {
+      if (account.kind === "bank") {
+        return total + parseAmount(account.amountText);
+      }
+      return total;
+    }, 0);
+  }, [dailyStateAccounts]);
+
   const assetsTotal = useMemo(() => {
-    return (
-      parseAmount(dailyStateForm.cash_total) +
-      parseAmount(dailyStateForm.bank_total)
-    );
-  }, [dailyStateForm.bank_total, dailyStateForm.cash_total]);
+    return cashTotal + noncashTotal;
+  }, [cashTotal, noncashTotal]);
 
   const debtsTotal = useMemo(() => {
     return (
@@ -646,6 +665,7 @@ export default function HomePage() {
   const monthExpenseTotal = monthReport?.month_expense ?? 0;
   const monthNetTotal = monthReport?.month_net ?? 0;
   const monthAvgNet = monthReport?.avg_net_per_day ?? 0;
+  const hasAccounts = accounts.length > 0;
 
   const renderCategoryTree = (parentId: string | null) => {
     const key = parentId ?? "root";
@@ -835,6 +855,7 @@ export default function HomePage() {
       setAccountName("");
       const updatedAccounts = await listAccounts(token, activeBudgetId);
       setAccounts(updatedAccounts);
+      await loadDailyStateData(token, activeBudgetId, selectedDate);
     } catch (error) {
       const apiError = error as Error & { status?: number; text?: string };
       setAccountErrorDetails({
@@ -1284,6 +1305,22 @@ export default function HomePage() {
     setDailyStateForm((prev) => ({ ...prev, [field]: value }));
   };
 
+  const handleDailyStateAccountChange = (
+    accountId: string,
+    value: string,
+  ) => {
+    if (Number.parseInt(value, 10) < 0) {
+      return;
+    }
+    setDailyStateAccounts((prev) =>
+      prev.map((account) =>
+        account.account_id === accountId
+          ? { ...account, amountText: value }
+          : account,
+      ),
+    );
+  };
+
   const handleSaveDailyState = async () => {
     if (!token || !activeBudgetId) {
       return;
@@ -1293,10 +1330,14 @@ export default function HomePage() {
       const payload = {
         budget_id: activeBudgetId,
         date: selectedDate,
-        cash_total: parseAmount(dailyStateForm.cash_total),
-        bank_total: parseAmount(dailyStateForm.bank_total),
-        debt_cards_total: parseAmount(dailyStateForm.debt_cards_total),
-        debt_other_total: parseAmount(dailyStateForm.debt_other_total),
+        accounts: dailyStateAccounts.map((account) => ({
+          account_id: account.account_id,
+          amount: parseAmount(account.amountText),
+        })),
+        debts: {
+          credit_cards: parseAmount(dailyStateForm.debt_cards_total),
+          people_debts: parseAmount(dailyStateForm.debt_other_total),
+        },
       };
       const updated = await updateDailyState(token, payload);
       setDailyStateFromData(updated);
@@ -1307,20 +1348,14 @@ export default function HomePage() {
     }
   };
 
-  const handleQuickAdjust = async (
-    event: MouseEvent<HTMLButtonElement> | null,
-    field: "cash_total" | "bank_total",
-    delta: number,
-  ) => {
+  const handleQuickAdjust = async (accountId: string, delta: number) => {
     const clickStamp = new Date().toISOString();
     setLastQuickAdjustClick(clickStamp);
     console.log("[quick-adjust] click", {
       clickStamp,
-      field,
+      accountId,
       delta,
-      hasEvent: Boolean(event),
     });
-    event?.preventDefault?.();
     if (!token || !activeBudgetId) {
       console.log("[quick-adjust] guard: missing token/budget", {
         tokenMissing: !token,
@@ -1334,7 +1369,13 @@ export default function HomePage() {
       });
       return;
     }
-    const currentValue = parseAmount(dailyStateForm[field]);
+    const currentAccount = dailyStateAccounts.find(
+      (account) => account.account_id === accountId,
+    );
+    if (!currentAccount) {
+      return;
+    }
+    const currentValue = parseAmount(currentAccount.amountText);
     const nextValue = currentValue + delta;
     if (nextValue < 0) {
       console.log("[quick-adjust] guard: nextValue < 0", {
@@ -1345,6 +1386,12 @@ export default function HomePage() {
       setMessage("Нельзя уменьшить ниже нуля");
       return;
     }
+    const updatedAccounts = dailyStateAccounts.map((account) =>
+      account.account_id === accountId
+        ? { ...account, amountText: String(nextValue) }
+        : account,
+    );
+    setDailyStateAccounts(updatedAccounts);
     setMessage("");
     setQuickAdjustErrorDetails(null);
     setQuickAdjustError(null);
@@ -1353,13 +1400,20 @@ export default function HomePage() {
       console.log("[quick-adjust] sending update", {
         budgetId: activeBudgetId,
         date: selectedDate,
-        field,
+        accountId,
         nextValue,
       });
       await updateDailyState(token, {
         budget_id: activeBudgetId,
         date: selectedDate,
-        [field]: nextValue,
+        accounts: updatedAccounts.map((account) => ({
+          account_id: account.account_id,
+          amount: parseAmount(account.amountText),
+        })),
+        debts: {
+          credit_cards: parseAmount(dailyStateForm.debt_cards_total),
+          people_debts: parseAmount(dailyStateForm.debt_other_total),
+        },
       });
       console.log("[quick-adjust] updateDailyState ok");
       await loadDailyStateData(token, activeBudgetId, selectedDate);
@@ -1818,130 +1872,136 @@ export default function HomePage() {
 
           {viewMode === "day" && (
             <>
-              <section>
-                <h2>Состояние дня (верхняя таблица)</h2>
-                <div>
-                  <label>
-                    Наличка:
-                    <input
-                      type="number"
-                      min="0"
-                      value={dailyStateForm.cash_total}
-                      onChange={(event) =>
-                        handleDailyStateChange("cash_total", event.target.value)
-                      }
-                    />
-                  </label>
-                  <label>
-                    Безнал:
-                    <input
-                      type="number"
-                      min="0"
-                      value={dailyStateForm.bank_total}
-                      onChange={(event) =>
-                        handleDailyStateChange("bank_total", event.target.value)
-                      }
-                    />
-                  </label>
-                  <label>
-                    Кредитки/рассрочки:
-                    <input
-                      type="number"
-                      min="0"
-                      value={dailyStateForm.debt_cards_total}
-                      onChange={(event) =>
-                        handleDailyStateChange(
-                          "debt_cards_total",
-                          event.target.value,
-                        )
-                      }
-                    />
-                  </label>
-                  <label>
-                    Долги людям:
-                    <input
-                      type="number"
-                      min="0"
-                      value={dailyStateForm.debt_other_total}
-                      readOnly
-                    />
-                  </label>
-                </div>
-                <p>Остаток: {assetsTotal} ₽</p>
-                <p>Долги: {debtsTotal} ₽</p>
-                <p>Баланс: {balanceTotal} ₽</p>
-                <p>Итог за день (верхний): {topDayTotal} ₽</p>
-                <button type="button" onClick={handleSaveDailyState}>
-                  Сохранить состояние дня
-                </button>
-              </section>
+              {!hasAccounts ? (
+                <section>
+                  <h2>Состояние дня (верхняя таблица)</h2>
+                  <p>Создайте хотя бы один счёт, чтобы вести операции.</p>
+                </section>
+              ) : (
+                <>
+                  <section>
+                    <h2>Состояние дня (верхняя таблица)</h2>
+                    <div>
+                      {dailyStateAccounts.map((account) => (
+                        <label key={account.account_id}>
+                          {account.name} ({account.kind}):
+                          <input
+                            type="number"
+                            min="0"
+                            value={account.amountText}
+                            onChange={(event) =>
+                              handleDailyStateAccountChange(
+                                account.account_id,
+                                event.target.value,
+                              )
+                            }
+                          />
+                        </label>
+                      ))}
+                      <label>
+                        Кредитки/рассрочки:
+                        <input
+                          type="number"
+                          min="0"
+                          value={dailyStateForm.debt_cards_total}
+                          onChange={(event) =>
+                            handleDailyStateChange(
+                              "debt_cards_total",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Долги людям:
+                        <input
+                          type="number"
+                          min="0"
+                          value={dailyStateForm.debt_other_total}
+                          onChange={(event) =>
+                            handleDailyStateChange(
+                              "debt_other_total",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+                    <p>Наличка (авто): {cashTotal} ₽</p>
+                    <p>Безнал (авто): {noncashTotal} ₽</p>
+                    <p>Остаток (авто): {assetsTotal} ₽</p>
+                    <p>Долги: {debtsTotal} ₽</p>
+                    <p>Баланс (авто): {balanceTotal} ₽</p>
+                    <p>Итог за день (верхний): {topDayTotal} ₽</p>
+                    <button type="button" onClick={handleSaveDailyState}>
+                      Сохранить состояние дня
+                    </button>
+                  </section>
 
-              <section>
-                <h2>Долги людям</h2>
-                <form onSubmit={handleCreateDebtOther}>
-                  <label>
-                    Направление:
-                    <select
-                      value={debtOtherDirection}
-                      onChange={(event) =>
-                        setDebtOtherDirection(
-                          event.target.value as "borrowed" | "repaid",
-                        )
-                      }
-                    >
-                      <option value="borrowed">Взял в долг</option>
-                      <option value="repaid">Отдал долг</option>
-                    </select>
-                  </label>
-                  <label>
-                    Куда пришли/откуда ушли:
-                    <select
-                      value={debtOtherAssetSide}
-                      onChange={(event) =>
-                        setDebtOtherAssetSide(
-                          event.target.value as "cash" | "bank",
-                        )
-                      }
-                    >
-                      <option value="cash">Наличка</option>
-                      <option value="bank">Безнал</option>
-                    </select>
-                  </label>
-                  <label>
-                    Сумма:
-                    <input
-                      type="number"
-                      min="1"
-                      value={debtOtherAmount}
-                      onChange={(event) =>
-                        setDebtOtherAmount(event.target.value)
-                      }
-                      required
-                    />
-                  </label>
-                  <label>
-                    Дата:
-                    <input
-                      type="date"
-                      value={selectedDate}
-                      readOnly
-                    />
-                  </label>
-                  <button type="submit">Сохранить</button>
-                </form>
-                {debtOtherErrorDetails && (
-                  <div>
-                    <p>
-                      debt_http_status:{" "}
-                      {debtOtherErrorDetails.httpStatus ?? "unknown"}
-                    </p>
-                    <p>
-                      debt_response_text:{" "}
-                      {debtOtherErrorDetails.responseText ?? "unknown"}
-                    </p>
-                  </div>
-                )}
-              </section>
+                  <section>
+                    <h2>Долги людям</h2>
+                    <form onSubmit={handleCreateDebtOther}>
+                      <label>
+                        Направление:
+                        <select
+                          value={debtOtherDirection}
+                          onChange={(event) =>
+                            setDebtOtherDirection(
+                              event.target.value as "borrowed" | "repaid",
+                            )
+                          }
+                        >
+                          <option value="borrowed">Взял в долг</option>
+                          <option value="repaid">Отдал долг</option>
+                        </select>
+                      </label>
+                      <label>
+                        Куда пришли/откуда ушли:
+                        <select
+                          value={debtOtherAssetSide}
+                          onChange={(event) =>
+                            setDebtOtherAssetSide(
+                              event.target.value as "cash" | "bank",
+                            )
+                          }
+                        >
+                          <option value="cash">Наличка</option>
+                          <option value="bank">Безнал</option>
+                        </select>
+                      </label>
+                      <label>
+                        Сумма:
+                        <input
+                          type="number"
+                          min="1"
+                          value={debtOtherAmount}
+                          onChange={(event) =>
+                            setDebtOtherAmount(event.target.value)
+                          }
+                          required
+                        />
+                      </label>
+                      <label>
+                        Дата:
+                        <input type="date" value={selectedDate} readOnly />
+                      </label>
+                      <button type="submit">Сохранить</button>
+                    </form>
+                    {debtOtherErrorDetails && (
+                      <div>
+                        <p>
+                          debt_http_status:{" "}
+                          {debtOtherErrorDetails.httpStatus ?? "unknown"}
+                        </p>
+                        <p>
+                          debt_response_text:{" "}
+                          {debtOtherErrorDetails.responseText ?? "unknown"}
+                        </p>
+                      </div>
+                    )}
+                  </section>
+                </>
+              )}
             </>
           )}
 
@@ -2111,114 +2171,68 @@ export default function HomePage() {
                 <p>Итог за день (нижний): {bottomDayTotal} ₽</p>
               </section>
 
-              <section>
-                <h2>Сверка</h2>
-                {dailyState?.is_carried && (
+              {hasAccounts && (
+                <section>
+                  <h2>Сверка</h2>
                   <p style={{ fontSize: "12px", opacity: 0.7 }}>
-                    Состояние подтянуто из {dailyState.as_of_date}. Изменения
-                    сохранятся на выбранную дату.
+                    lastQuickAdjustClick: {lastQuickAdjustClick || "—"}
                   </p>
-                )}
-                <p style={{ fontSize: "12px", opacity: 0.7 }}>
-                  lastQuickAdjustClick: {lastQuickAdjustClick || "—"}
-                </p>
-                <p>
-                  Верхний итог: {topDayTotal} ₽, Нижний итог: {bottomDayTotal} ₽,
-                  Разница: {reconcileDiff} ₽
-                </p>
-                {isReconciled ? (
-                  <p>Сверка: OK</p>
-                ) : (
-                  <>
-                    <p>Сверка: расхождение {reconcileDiffAbs} ₽</p>
-                    <p>
-                      {reconcileDiff > 1
-                        ? "Остатки больше, чем операции. Нужна корректировка."
-                        : "Остатки меньше, чем операции. Нужна корректировка."}
-                    </p>
-                    <div>
-                      {reconcileDiff > 1 && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={(event) =>
-                              handleQuickAdjust(
-                                event,
-                                "cash_total",
-                                -reconcileDiffAbs,
-                              )
-                            }
-                            disabled={isQuickAdjusting}
-                          >
-                            Уменьшить наличку на {reconcileDiffAbs} ₽
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(event) =>
-                              handleQuickAdjust(
-                                event,
-                                "bank_total",
-                                -reconcileDiffAbs,
-                              )
-                            }
-                            disabled={isQuickAdjusting}
-                          >
-                            Уменьшить безнал на {reconcileDiffAbs} ₽
-                          </button>
-                        </>
-                      )}
-                      {reconcileDiff < -1 && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={(event) =>
-                              handleQuickAdjust(
-                                event,
-                                "cash_total",
-                                reconcileDiffAbs,
-                              )
-                            }
-                            disabled={isQuickAdjusting}
-                          >
-                            Увеличить наличку на {reconcileDiffAbs} ₽
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(event) =>
-                              handleQuickAdjust(
-                                event,
-                                "bank_total",
-                                reconcileDiffAbs,
-                              )
-                            }
-                            disabled={isQuickAdjusting}
-                          >
-                            Увеличить безнал на {reconcileDiffAbs} ₽
-                          </button>
-                        </>
-                      )}
-                    </div>
-                    {quickAdjustErrorDetails && (
+                  <p>
+                    Верхний итог: {topDayTotal} ₽, Нижний итог: {bottomDayTotal}{" "}
+                    ₽, Разница: {reconcileDiff} ₽
+                  </p>
+                  {isReconciled ? (
+                    <p>Сверка: OK</p>
+                  ) : (
+                    <>
+                      <p>Сверка: расхождение {reconcileDiffAbs} ₽</p>
+                      <p>
+                        {reconcileDiff > 1
+                          ? "Остатки больше, чем операции. Нужна корректировка."
+                          : "Остатки меньше, чем операции. Нужна корректировка."}
+                      </p>
                       <div>
-                        <p>
-                          http_status:{" "}
-                          {quickAdjustErrorDetails.httpStatus ?? "unknown"}
-                        </p>
-                        <p>
-                          response_text:{" "}
-                          {quickAdjustErrorDetails.responseText ?? "unknown"}
-                        </p>
+                        {dailyStateAccounts.map((account) => (
+                          <button
+                            key={account.account_id}
+                            type="button"
+                            onClick={() =>
+                              handleQuickAdjust(
+                                account.account_id,
+                                -reconcileDiff,
+                              )
+                            }
+                            disabled={isQuickAdjusting}
+                          >
+                            Изменить {account.name} на {-reconcileDiff} ₽
+                          </button>
+                        ))}
                       </div>
-                    )}
-                    {quickAdjustError && <p>{quickAdjustError}</p>}
-                  </>
-                )}
-              </section>
+                      {quickAdjustErrorDetails && (
+                        <div>
+                          <p>
+                            http_status:{" "}
+                            {quickAdjustErrorDetails.httpStatus ?? "unknown"}
+                          </p>
+                          <p>
+                            response_text:{" "}
+                            {quickAdjustErrorDetails.responseText ?? "unknown"}
+                          </p>
+                        </div>
+                      )}
+                      {quickAdjustError && <p>{quickAdjustError}</p>}
+                    </>
+                  )}
+                </section>
+              )}
             </>
           )}
 
           <section>
             <h2>Добавить доход</h2>
+            {!hasAccounts && (
+              <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
+            )}
             <form onSubmit={handleCreateIncome}>
               <label>
                 Счет:
@@ -2226,6 +2240,7 @@ export default function HomePage() {
                   value={incomeAccountId}
                   onChange={(event) => setIncomeAccountId(event.target.value)}
                   required
+                  disabled={!hasAccounts}
                 >
                   <option value="">Выберите счет</option>
                   {accounts.map((account) => (
@@ -2243,6 +2258,7 @@ export default function HomePage() {
                   value={incomeAmount}
                   onChange={(event) => setIncomeAmount(event.target.value)}
                   required
+                  disabled={!hasAccounts}
                 />
               </label>
               <label>
@@ -2251,6 +2267,7 @@ export default function HomePage() {
                   type="text"
                   value={incomeNote}
                   onChange={(event) => setIncomeNote(event.target.value)}
+                  disabled={!hasAccounts}
                 />
               </label>
               {showIncomeSuggestion && incomeSuggestion && (
@@ -2276,7 +2293,9 @@ export default function HomePage() {
                   </button>
                 </div>
               )}
-              <button type="submit">Добавить</button>
+              <button type="submit" disabled={!hasAccounts}>
+                Добавить
+              </button>
             </form>
             {incomeErrorDetails && (
               <div>
@@ -2293,6 +2312,9 @@ export default function HomePage() {
 
           <section>
             <h2>Добавить расход</h2>
+            {!hasAccounts && (
+              <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
+            )}
             <form onSubmit={handleCreateExpense}>
               <label>
                 Счет:
@@ -2300,6 +2322,7 @@ export default function HomePage() {
                   value={expenseAccountId}
                   onChange={(event) => setExpenseAccountId(event.target.value)}
                   required
+                  disabled={!hasAccounts}
                 >
                   <option value="">Выберите счет</option>
                   {accounts.map((account) => (
@@ -2317,6 +2340,7 @@ export default function HomePage() {
                   value={expenseAmount}
                   onChange={(event) => setExpenseAmount(event.target.value)}
                   required
+                  disabled={!hasAccounts}
                 />
               </label>
               <label>
@@ -2324,6 +2348,7 @@ export default function HomePage() {
                 <select
                   value={expenseCategoryId}
                   onChange={(event) => setExpenseCategoryId(event.target.value)}
+                  disabled={!hasAccounts}
                 >
                   <option value="">Без категории</option>
                   {categories.map((category) => (
@@ -2342,6 +2367,7 @@ export default function HomePage() {
                       event.target.value as "one_time" | "subscription",
                     )
                   }
+                  disabled={!hasAccounts}
                 >
                   <option value="one_time">Разовый</option>
                   <option value="subscription">Подписка</option>
@@ -2353,6 +2379,7 @@ export default function HomePage() {
                   type="text"
                   value={expenseNote}
                   onChange={(event) => setExpenseNote(event.target.value)}
+                  disabled={!hasAccounts}
                 />
               </label>
               {showExpenseSuggestion && expenseSuggestion && (
@@ -2378,7 +2405,9 @@ export default function HomePage() {
                   </button>
                 </div>
               )}
-              <button type="submit">Добавить</button>
+              <button type="submit" disabled={!hasAccounts}>
+                Добавить
+              </button>
             </form>
             {expenseErrorDetails && (
               <div>
@@ -2395,6 +2424,9 @@ export default function HomePage() {
 
           <section>
             <h2>Добавить перевод</h2>
+            {!hasAccounts && (
+              <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
+            )}
             <form onSubmit={handleCreateTransfer}>
               <label>
                 Откуда:
@@ -2404,6 +2436,7 @@ export default function HomePage() {
                     setTransferFromAccountId(event.target.value)
                   }
                   required
+                  disabled={!hasAccounts}
                 >
                   <option value="">Выберите счет</option>
                   {accounts.map((account) => (
@@ -2421,6 +2454,7 @@ export default function HomePage() {
                     setTransferToAccountId(event.target.value)
                   }
                   required
+                  disabled={!hasAccounts}
                 >
                   <option value="">Выберите счет</option>
                   {accounts.map((account) => (
@@ -2438,6 +2472,7 @@ export default function HomePage() {
                   value={transferAmount}
                   onChange={(event) => setTransferAmount(event.target.value)}
                   required
+                  disabled={!hasAccounts}
                 />
               </label>
               <label>
@@ -2446,9 +2481,12 @@ export default function HomePage() {
                   type="text"
                   value={transferNote}
                   onChange={(event) => setTransferNote(event.target.value)}
+                  disabled={!hasAccounts}
                 />
               </label>
-              <button type="submit">Добавить</button>
+              <button type="submit" disabled={!hasAccounts}>
+                Добавить
+              </button>
             </form>
             {transferErrorDetails && (
               <div>
