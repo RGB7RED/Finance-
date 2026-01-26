@@ -11,11 +11,12 @@ from app.core.config import get_telegram_bot_token, settings
 from app.repositories.accounts import create_account, list_accounts
 from app.repositories.budgets import ensure_default_budgets, list_budgets
 from app.repositories.categories import create_category, list_categories
-from app.repositories.daily_state import get_delta, get_or_create, upsert
+from app.repositories.daily_state import get_delta, get_state_or_default, upsert
 from app.repositories.debts_other import (
     create_debt_other,
     delete_debt_other,
     list_debts_other,
+    sum_debts_other_as_of,
 )
 from app.repositories.transactions import (
     create_transaction,
@@ -241,7 +242,16 @@ def post_debts_other(
         payload.amount,
         payload.note,
     )
-    get_or_create(current_user["sub"], payload.budget_id, _utc_today())
+    today = _utc_today()
+    debt_other_total = sum_debts_other_as_of(
+        current_user["sub"], payload.budget_id, today
+    )
+    upsert(
+        current_user["sub"],
+        payload.budget_id,
+        today,
+        {"debt_other_total": debt_other_total},
+    )
     return record
 
 
@@ -250,7 +260,16 @@ def delete_debts_other(
     debt_id: str, current_user: dict = Depends(get_current_user)
 ) -> dict[str, str]:
     record = delete_debt_other(current_user["sub"], debt_id)
-    get_or_create(current_user["sub"], record["budget_id"], _utc_today())
+    today = _utc_today()
+    debt_other_total = sum_debts_other_as_of(
+        current_user["sub"], record["budget_id"], today
+    )
+    upsert(
+        current_user["sub"],
+        record["budget_id"],
+        today,
+        {"debt_other_total": debt_other_total},
+    )
     return {"status": "deleted"}
 
 
@@ -260,7 +279,7 @@ def get_daily_state(
     date: date,
     current_user: dict = Depends(get_current_user),
 ) -> DailyStateOut:
-    record = get_or_create(current_user["sub"], budget_id, date)
+    record = get_state_or_default(current_user["sub"], budget_id, date)
     return DailyStateOut(**record)
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -32,20 +33,26 @@ def list_debts_other(user_id: str, budget_id: str) -> list[dict[str, Any]]:
         .select("id, budget_id, user_id, name, amount, note, created_at")
         .eq("budget_id", budget_id)
         .eq("user_id", user_id)
+        .is_("deleted_at", "null")
         .order("created_at")
         .execute()
     )
     return response.data or []
 
 
-def sum_debts_other(user_id: str, budget_id: str) -> int:
+def sum_debts_other_as_of(
+    user_id: str, budget_id: str, as_of_date: date
+) -> int:
     _ensure_budget_access(user_id, budget_id)
+    next_day = as_of_date + timedelta(days=1)
     client = get_supabase_client()
     response = (
         client.table("debts_other")
         .select("amount")
         .eq("budget_id", budget_id)
         .eq("user_id", user_id)
+        .lte("start_date", as_of_date.isoformat())
+        .or_(f"deleted_at.is.null,deleted_at.gte.{next_day.isoformat()}")
         .execute()
     )
     data = response.data or []
@@ -66,6 +73,7 @@ def create_debt_other(
             detail="amount must be >= 0",
         )
     client = get_supabase_client()
+    start_date = datetime.now(timezone.utc).date().isoformat()
     try:
         response = (
             client.table("debts_other")
@@ -76,6 +84,7 @@ def create_debt_other(
                     "name": name,
                     "amount": amount,
                     "note": note,
+                    "start_date": start_date,
                 }
             )
             .execute()
@@ -110,5 +119,8 @@ def delete_debt_other(user_id: str, debt_id: str) -> dict[str, Any]:
             detail="Debt does not belong to user",
         )
     _ensure_budget_access(user_id, record["budget_id"])
-    client.table("debts_other").delete().eq("id", debt_id).execute()
+    deleted_at = datetime.now(timezone.utc).isoformat()
+    client.table("debts_other").update({"deleted_at": deleted_at}).eq(
+        "id", debt_id
+    ).execute()
     return record

@@ -7,7 +7,6 @@ from fastapi import HTTPException, status
 from postgrest.exceptions import APIError
 
 from app.integrations.supabase_client import get_supabase_client
-from app.repositories.debts_other import sum_debts_other
 
 
 def _ensure_budget_access(user_id: str, budget_id: str) -> None:
@@ -57,11 +56,10 @@ def _raise_postgrest_http_error(exc: APIError) -> None:
     ) from exc
 
 
-def get_or_create(
+def get_state(
     user_id: str, budget_id: str, target_date: date
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     _ensure_budget_access(user_id, budget_id)
-    debt_other_total = sum_debts_other(user_id, budget_id)
     client = get_supabase_client()
     query = (
         client.table("daily_state")
@@ -80,63 +78,28 @@ def get_or_create(
         response = query.execute()
     except APIError as exc:
         if _is_missing_row_error(exc):
-            response = None
+            return None
         else:
             _raise_postgrest_http_error(exc)
     if response and response.data:
-        record = response.data
-        try:
-            updated = (
-                client.table("daily_state")
-                .upsert(
-                    {
-                        "budget_id": budget_id,
-                        "user_id": user_id,
-                        "date": target_date.isoformat(),
-                        "debt_other_total": debt_other_total,
-                    },
-                    on_conflict="budget_id,date",
-                )
-                .execute()
-            )
-        except APIError as exc:
-            _raise_postgrest_http_error(exc)
-        data = updated.data or []
-        if data:
-            record = data[0]
-        record = {**record, "debt_other_total": debt_other_total}
-        return {**record, **_calculate_totals(record)}
+        return response.data
+    return None
 
-    insert_payload = {
-        "budget_id": budget_id,
-        "user_id": user_id,
-        "date": target_date.isoformat(),
-        "cash_total": 0,
-        "bank_total": 0,
-        "debt_cards_total": 0,
-        "debt_other_total": debt_other_total,
-    }
-    try:
-        inserted = (
-            client.table("daily_state")
-            .upsert(insert_payload, on_conflict="budget_id,date")
-            .execute()
-        )
-    except APIError as exc:
-        _raise_postgrest_http_error(exc)
-    data = inserted.data or []
-    if data:
-        record = data[0]
-        return {**record, **_calculate_totals(record)}
-    try:
-        existing = query.execute()
-    except APIError as exc:
-        if _is_missing_row_error(exc):
-            raise RuntimeError("Failed to create daily state") from exc
-        _raise_postgrest_http_error(exc)
-    if not existing.data:
-        raise RuntimeError("Failed to create daily state")
-    record = existing.data
+
+def get_state_or_default(
+    user_id: str, budget_id: str, target_date: date
+) -> dict[str, Any]:
+    record = get_state(user_id, budget_id, target_date)
+    if record is None:
+        record = {
+            "budget_id": budget_id,
+            "user_id": user_id,
+            "date": target_date.isoformat(),
+            "cash_total": 0,
+            "bank_total": 0,
+            "debt_cards_total": 0,
+            "debt_other_total": 0,
+        }
     return {**record, **_calculate_totals(record)}
 
 
@@ -170,12 +133,12 @@ def upsert(
 
 
 def get_balance(user_id: str, budget_id: str, target_date: date) -> int:
-    record = get_or_create(user_id, budget_id, target_date)
+    record = get_state_or_default(user_id, budget_id, target_date)
     return int(record["balance"])
 
 
 def get_delta(user_id: str, budget_id: str, target_date: date) -> int:
-    current_balance = get_balance(user_id, budget_id, target_date)
+    current = get_state_or_default(user_id, budget_id, target_date)
     previous_date = target_date - timedelta(days=1)
-    previous_balance = get_balance(user_id, budget_id, previous_date)
-    return current_balance - previous_balance
+    previous = get_state_or_default(user_id, budget_id, previous_date)
+    return int(current["balance"]) - int(previous["balance"])

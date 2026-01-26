@@ -6,8 +6,8 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.integrations.supabase_client import get_supabase_client
-from app.repositories.daily_state import get_or_create
-from app.repositories.debts_other import sum_debts_other
+from app.repositories.daily_state import get_state_or_default
+from app.repositories.debts_other import sum_debts_other_as_of
 
 
 def _ensure_budget_access(user_id: str, budget_id: str) -> None:
@@ -104,21 +104,44 @@ def balance_by_day(
     )
     records = {item.get("date"): item for item in response.data or []}
     result = []
+    last_state: dict[str, int] | None = None
+    last_balance = 0
     for day in _date_range(date_from, date_to):
         key = day.isoformat()
-        record = records.get(key) or {}
-        cash_total = int(record.get("cash_total", 0))
-        bank_total = int(record.get("bank_total", 0))
-        debt_cards_total = int(record.get("debt_cards_total", 0))
-        debt_other_total = int(record.get("debt_other_total", 0))
+        record = records.get(key)
+        if record:
+            cash_total = int(record.get("cash_total", 0))
+            bank_total = int(record.get("bank_total", 0))
+            debt_cards_total = int(record.get("debt_cards_total", 0))
+            debt_other_total = int(record.get("debt_other_total", 0))
+            last_state = {
+                "cash_total": cash_total,
+                "bank_total": bank_total,
+                "debt_cards_total": debt_cards_total,
+                "debt_other_total": debt_other_total,
+            }
+        elif last_state is not None:
+            cash_total = last_state["cash_total"]
+            bank_total = last_state["bank_total"]
+            debt_cards_total = last_state["debt_cards_total"]
+            debt_other_total = last_state["debt_other_total"]
+        else:
+            cash_total = 0
+            bank_total = 0
+            debt_cards_total = 0
+            debt_other_total = 0
         assets_total = cash_total + bank_total
         debts_total = debt_cards_total + debt_other_total
+        balance = assets_total - debts_total
+        delta_balance = balance - last_balance
+        last_balance = balance
         result.append(
             {
                 "date": key,
                 "assets_total": assets_total,
                 "debts_total": debts_total,
-                "balance": assets_total - debts_total,
+                "balance": balance,
+                "delta_balance": delta_balance,
             }
         )
     return result
@@ -126,8 +149,8 @@ def balance_by_day(
 
 def summary(user_id: str, budget_id: str) -> dict[str, Any]:
     today = datetime.now(timezone.utc).date()
-    daily_state = get_or_create(user_id, budget_id, today)
-    debt_other_total = sum_debts_other(user_id, budget_id)
+    daily_state = get_state_or_default(user_id, budget_id, today)
+    debt_other_total = sum_debts_other_as_of(user_id, budget_id, today)
     client = get_supabase_client()
     response = (
         client.table("goals")
