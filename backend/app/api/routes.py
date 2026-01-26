@@ -1,6 +1,6 @@
+import datetime as dt
 import logging
-from datetime import date, datetime, timezone
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -48,7 +48,7 @@ class TransactionCreate(BaseModel):
     budget_id: str
     type: Literal["income", "expense", "transfer"]
     amount: int = Field(gt=0)
-    date: date
+    date: dt.date
     account_id: str | None = None
     to_account_id: str | None = None
     category_id: str | None = None
@@ -60,7 +60,7 @@ class TransactionOut(BaseModel):
     id: str
     budget_id: str
     user_id: str
-    date: date
+    date: dt.date
     type: Literal["income", "expense", "transfer"]
     amount: int
     account_id: str | None = None
@@ -73,7 +73,7 @@ class TransactionOut(BaseModel):
 
 class DailyStateUpdate(BaseModel):
     budget_id: str
-    date: date
+    date: dt.date
     cash_total: int | None = Field(default=None, ge=0)
     bank_total: int | None = Field(default=None, ge=0)
     debt_cards_total: int | None = Field(default=None, ge=0)
@@ -83,7 +83,7 @@ class DailyStateUpdate(BaseModel):
 class DailyStateOut(BaseModel):
     budget_id: str
     user_id: str
-    date: date
+    date: dt.date
     cash_total: int
     bank_total: int
     debt_cards_total: int
@@ -98,7 +98,7 @@ class DebtOtherCreateRequest(BaseModel):
     amount: int = Field(gt=0)
     direction: Literal["borrowed", "repaid"]
     asset_side: Literal["cash", "bank"]
-    date: date | None = None
+    date: Optional[dt.date] = None
 
 
 class DebtOtherOut(BaseModel):
@@ -111,8 +111,8 @@ class DebtOtherOut(BaseModel):
     created_at: str
 
 
-def _utc_today() -> date:
-    return datetime.now(timezone.utc).date()
+def _utc_today() -> dt.date:
+    return dt.datetime.now(dt.timezone.utc).date()
 
 
 @router.post("/auth/telegram")
@@ -202,7 +202,7 @@ def post_categories(
 @router.get("/transactions")
 def get_transactions(
     budget_id: str,
-    date: date,
+    date: dt.date,
     current_user: dict = Depends(get_current_user),
 ) -> list[TransactionOut]:
     return list_transactions(current_user["sub"], budget_id, date.isoformat())
@@ -295,7 +295,7 @@ def delete_debts_other(
 @router.get("/daily-state")
 def get_daily_state(
     budget_id: str,
-    date: date,
+    date: dt.date,
     current_user: dict = Depends(get_current_user),
 ) -> DailyStateOut:
     record = get_state_or_default(current_user["sub"], budget_id, date)
@@ -321,7 +321,7 @@ def put_daily_state(
 @router.get("/daily-state/delta")
 def get_daily_delta(
     budget_id: str,
-    date: date,
+    date: dt.date,
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, int]:
     delta = get_delta(current_user["sub"], budget_id, date)
