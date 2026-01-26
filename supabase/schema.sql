@@ -94,3 +94,18 @@ create table if not exists public.debts_other (
 
 create index if not exists debts_other_budget_user_idx
     on public.debts_other (budget_id, user_id);
+
+create table if not exists public.goals (
+    id uuid primary key default gen_random_uuid(),
+    budget_id uuid not null references public.budgets(id) on delete cascade,
+    user_id uuid not null references public.users(id) on delete cascade,
+    title text not null,
+    target_amount integer not null check (target_amount > 0),
+    current_amount integer not null default 0 check (current_amount >= 0),
+    deadline date null,
+    status text not null default 'active' check (status in ('active', 'done', 'archived')),
+    created_at timestamptz not null default now()
+);
+
+create index if not exists goals_budget_user_idx
+    on public.goals (budget_id, user_id);
