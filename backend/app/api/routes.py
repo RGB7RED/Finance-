@@ -24,6 +24,13 @@ from app.repositories.debts_other import (
     delete_debt_other,
     list_debts_other,
 )
+from app.repositories.rules import (
+    create_rule,
+    delete_rule,
+    feedback as record_feedback,
+    list_rules,
+    suggest as suggest_rule,
+)
 from app.repositories.transactions import (
     create_transaction,
     delete_transaction,
@@ -119,6 +126,52 @@ class DebtOtherOut(BaseModel):
     amount: int
     note: str | None = None
     created_at: str
+
+
+class RuleCreateRequest(BaseModel):
+    budget_id: str
+    pattern: str
+    match_type: Literal["contains"] = "contains"
+    account_id: str | None = None
+    category_id: str | None = None
+    tag: Literal["one_time", "subscription"] | None = None
+
+
+class RuleOut(BaseModel):
+    id: str
+    budget_id: str
+    user_id: str
+    pattern: str
+    match_type: Literal["contains"]
+    account_id: str | None = None
+    category_id: str | None = None
+    tag: Literal["one_time", "subscription"] | None = None
+    hits: int
+    accepts: int
+    confidence: float
+    created_at: str
+
+
+class SuggestRequest(BaseModel):
+    budget_id: str
+    note: str
+
+
+class SuggestResponse(BaseModel):
+    account_id: str | None = None
+    category_id: str | None = None
+    tag: Literal["one_time", "subscription"] | None = None
+    confidence: float
+    pattern: str | None = None
+
+
+class FeedbackRequest(BaseModel):
+    budget_id: str
+    note: str
+    accepted: bool
+    account_id: str | None = None
+    category_id: str | None = None
+    tag: Literal["one_time", "subscription"] | None = None
 
 
 def _utc_today() -> dt.date:
@@ -356,3 +409,47 @@ def get_daily_delta(
 ) -> dict[str, int]:
     delta = get_delta(current_user["sub"], budget_id, date)
     return {"top_day_total": delta}
+
+
+@router.get("/rules")
+def get_rules(
+    budget_id: str, current_user: dict = Depends(get_current_user)
+) -> list[RuleOut]:
+    return list_rules(current_user["sub"], budget_id)
+
+
+@router.post("/rules")
+def post_rules(
+    payload: RuleCreateRequest, current_user: dict = Depends(get_current_user)
+) -> RuleOut:
+    return create_rule(current_user["sub"], payload.model_dump(mode="json"))
+
+
+@router.delete("/rules/{rule_id}")
+def delete_rules(
+    rule_id: str, current_user: dict = Depends(get_current_user)
+) -> dict[str, str]:
+    delete_rule(current_user["sub"], rule_id)
+    return {"status": "deleted"}
+
+
+@router.post("/suggest")
+def post_suggest(
+    payload: SuggestRequest, current_user: dict = Depends(get_current_user)
+) -> SuggestResponse:
+    return suggest_rule(current_user["sub"], payload.budget_id, payload.note)
+
+
+@router.post("/feedback")
+def post_feedback(
+    payload: FeedbackRequest, current_user: dict = Depends(get_current_user)
+) -> RuleOut:
+    return record_feedback(
+        current_user["sub"],
+        payload.budget_id,
+        payload.note,
+        payload.accepted,
+        payload.account_id,
+        payload.category_id,
+        payload.tag,
+    )

@@ -68,6 +68,26 @@ create table if not exists public.transactions (
     check ((type = 'transfer' and category_id is null) or type <> 'transfer')
 );
 
+create table if not exists public.rules (
+    id uuid primary key default gen_random_uuid(),
+    budget_id uuid not null references public.budgets(id) on delete cascade,
+    user_id uuid not null references public.users(id) on delete cascade,
+    pattern text not null,
+    match_type text not null default 'contains' check (match_type in ('contains')),
+    account_id uuid null references public.accounts(id) on delete set null,
+    category_id uuid null references public.categories(id) on delete set null,
+    tag text null check (tag in ('one_time', 'subscription')),
+    hits integer not null default 0,
+    accepts integer not null default 0,
+    confidence numeric not null default 0.0,
+    created_at timestamptz not null default now(),
+    check (
+        account_id is not null
+        or category_id is not null
+        or tag is not null
+    )
+);
+
 create table if not exists public.daily_state (
     id uuid primary key default gen_random_uuid(),
     budget_id uuid not null references public.budgets(id) on delete cascade,

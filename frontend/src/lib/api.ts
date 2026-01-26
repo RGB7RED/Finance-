@@ -166,6 +166,29 @@ export type Transaction = {
   created_at: string;
 };
 
+export type Rule = {
+  id: string;
+  budget_id: string;
+  user_id: string;
+  pattern: string;
+  match_type: "contains";
+  account_id: string | null;
+  category_id: string | null;
+  tag: "one_time" | "subscription" | null;
+  hits: number;
+  accepts: number;
+  confidence: number;
+  created_at: string;
+};
+
+export type Suggestion = {
+  account_id: string | null;
+  category_id: string | null;
+  tag: "one_time" | "subscription" | null;
+  confidence: number;
+  pattern: string | null;
+};
+
 export type DailyState = {
   budget_id: string;
   user_id: string;
@@ -394,6 +417,129 @@ export const deleteTransaction = async (
     method: "DELETE",
     headers: authHeaders(token),
   });
+
+export const listRules = async (
+  token: string,
+  budgetId: string,
+): Promise<Rule[]> => {
+  const query = new URLSearchParams({ budget_id: budgetId });
+  return requestJson(`/rules?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const createRule = async (
+  token: string,
+  payload: {
+    budget_id: string;
+    pattern: string;
+    match_type?: "contains";
+    account_id?: string | null;
+    category_id?: string | null;
+    tag?: "one_time" | "subscription" | null;
+  },
+): Promise<Rule> => {
+  if (!API_BASE_URL) {
+    throw buildError("API недоступен");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/rules`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw buildError("API недоступен");
+  }
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw buildError("Request failed", response.status, responseText);
+  }
+
+  return (await response.json()) as Rule;
+};
+
+export const deleteRule = async (
+  token: string,
+  id: string,
+): Promise<{ status: string }> =>
+  requestJson(`/rules/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+
+export const suggest = async (
+  token: string,
+  payload: { budget_id: string; note: string },
+): Promise<Suggestion> => {
+  if (!API_BASE_URL) {
+    throw buildError("API недоступен");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/suggest`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw buildError("API недоступен");
+  }
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw buildError("Request failed", response.status, responseText);
+  }
+
+  return (await response.json()) as Suggestion;
+};
+
+export const feedback = async (
+  token: string,
+  payload: {
+    budget_id: string;
+    note: string;
+    accepted: boolean;
+    account_id?: string | null;
+    category_id?: string | null;
+    tag?: "one_time" | "subscription" | null;
+  },
+): Promise<Rule> => {
+  if (!API_BASE_URL) {
+    throw buildError("API недоступен");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/feedback`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw buildError("API недоступен");
+  }
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw buildError("Request failed", response.status, responseText);
+  }
+
+  return (await response.json()) as Rule;
+};
 
 export const getDailyState = async (
   token: string,
