@@ -1125,6 +1125,7 @@ export default function HomePage() {
                       <th>Остаток</th>
                       <th>Долги</th>
                       <th>Баланс</th>
+                      <th>Итог за день</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1134,6 +1135,10 @@ export default function HomePage() {
                         <td>{row.assets_total} ₽</td>
                         <td>{row.debts_total} ₽</td>
                         <td>{row.balance} ₽</td>
+                        <td>
+                          {row.delta_balance >= 0 ? "+" : ""}
+                          {row.delta_balance} ₽
+                        </td>
                       </tr>
                     ))}
                   </tbody>

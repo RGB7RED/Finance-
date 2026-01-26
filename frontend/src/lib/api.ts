@@ -213,6 +213,7 @@ export type BalanceDay = {
   assets_total: number;
   debts_total: number;
   balance: number;
+  delta_balance: number;
 };
 
 export type ReportsGoal = {

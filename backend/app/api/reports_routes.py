@@ -21,6 +21,7 @@ class BalanceDay(BaseModel):
     assets_total: int
     debts_total: int
     balance: int
+    delta_balance: int
 
 
 class ReportsGoal(BaseModel):

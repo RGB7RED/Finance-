@@ -89,6 +89,8 @@ create table if not exists public.debts_other (
     name text not null,
     amount integer not null check (amount >= 0),
     note text null,
+    start_date date not null default (now()::date),
+    deleted_at timestamptz null,
     created_at timestamptz not null default now()
 );
 
