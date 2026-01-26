@@ -170,6 +170,7 @@ export default function HomePage() {
     useState<FormErrorDetails | null>(null);
   const [quickAdjustErrorDetails, setQuickAdjustErrorDetails] =
     useState<FormErrorDetails | null>(null);
+  const [quickAdjustError, setQuickAdjustError] = useState<string | null>(null);
   const [isQuickAdjusting, setIsQuickAdjusting] = useState(false);
 
   const setDailyStateFromData = (state: DailyState) => {
@@ -956,11 +957,11 @@ export default function HomePage() {
   };
 
   const handleQuickAdjust = async (
-    event: MouseEvent<HTMLButtonElement>,
+    event: MouseEvent<HTMLButtonElement> | null,
     field: "cash_total" | "bank_total",
     delta: number,
   ) => {
-    event.preventDefault();
+    event?.preventDefault?.();
     if (!token || !activeBudgetId) {
       return;
     }
@@ -975,6 +976,7 @@ export default function HomePage() {
     }
     setMessage("");
     setQuickAdjustErrorDetails(null);
+    setQuickAdjustError(null);
     setIsQuickAdjusting(true);
     try {
       await updateDailyState(token, {
@@ -990,6 +992,7 @@ export default function HomePage() {
         httpStatus: apiError.status,
         responseText: apiError.text,
       });
+      setQuickAdjustError(String(error));
       setMessage(buildErrorMessage("Не удалось обновить состояние дня", error));
     } finally {
       setIsQuickAdjusting(false);
@@ -1586,6 +1589,7 @@ export default function HomePage() {
                     </p>
                   </div>
                 )}
+                {quickAdjustError && <p>{quickAdjustError}</p>}
               </>
             )}
           </section>
