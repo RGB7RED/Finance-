@@ -16,7 +16,6 @@ import {
   type CashflowDay,
   type Category,
   type DailyState,
-  type DebtOther,
   type Goal,
   type ReportsSummary,
   type Transaction,
@@ -27,7 +26,6 @@ import {
   createGoal,
   createTransaction,
   deleteGoal,
-  deleteDebtOther,
   deleteTransaction,
   ensureDefaultBudgets,
   getDailyDelta,
@@ -41,7 +39,6 @@ import {
   listAccounts,
   listBudgets,
   listCategories,
-  listDebtsOther,
   listGoals,
   listTransactions,
   updateGoal,
@@ -102,7 +99,6 @@ export default function HomePage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [debtsOther, setDebtsOther] = useState<DebtOther[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [dailyState, setDailyState] = useState<DailyState | null>(null);
   const [dailyDelta, setDailyDelta] = useState<number | null>(null);
@@ -144,9 +140,13 @@ export default function HomePage() {
   const [transferToAccountId, setTransferToAccountId] = useState("");
   const [transferAmount, setTransferAmount] = useState("");
   const [transferNote, setTransferNote] = useState("");
-  const [debtOtherName, setDebtOtherName] = useState("");
   const [debtOtherAmount, setDebtOtherAmount] = useState("");
-  const [debtOtherNote, setDebtOtherNote] = useState("");
+  const [debtOtherDirection, setDebtOtherDirection] = useState<
+    "borrowed" | "repaid"
+  >("borrowed");
+  const [debtOtherAssetSide, setDebtOtherAssetSide] = useState<
+    "cash" | "bank"
+  >("cash");
   const [goalTitle, setGoalTitle] = useState("");
   const [goalTargetAmount, setGoalTargetAmount] = useState("");
   const [goalDeadline, setGoalDeadline] = useState("");
@@ -351,20 +351,17 @@ export default function HomePage() {
           loadedAccounts,
           loadedCategories,
           loadedTransactions,
-          loadedDebtsOther,
           loadedGoals,
         ] = await Promise.all([
           listAccounts(resolvedToken, nextBudgetId),
           listCategories(resolvedToken, nextBudgetId),
           listTransactions(resolvedToken, nextBudgetId, selectedDate),
-          listDebtsOther(resolvedToken, nextBudgetId),
           listGoals(resolvedToken, nextBudgetId),
         ]);
         await loadDailyStateData(resolvedToken, nextBudgetId, selectedDate);
         setAccounts(loadedAccounts);
         setCategories(loadedCategories);
         setTransactions(loadedTransactions);
-        setDebtsOther(loadedDebtsOther);
         setGoals(loadedGoals);
         setStatus("ready");
       } catch (error) {
@@ -388,7 +385,6 @@ export default function HomePage() {
     setAccounts([]);
     setCategories([]);
     setTransactions([]);
-    setDebtsOther([]);
     setGoals([]);
     setDailyState(null);
     setDailyDelta(null);
@@ -401,9 +397,9 @@ export default function HomePage() {
       debt_cards_total: "",
       debt_other_total: "",
     });
-    setDebtOtherName("");
     setDebtOtherAmount("");
-    setDebtOtherNote("");
+    setDebtOtherDirection("borrowed");
+    setDebtOtherAssetSide("cash");
     setGoalTitle("");
     setGoalTargetAmount("");
     setGoalDeadline("");
@@ -513,27 +509,24 @@ export default function HomePage() {
     setMessage("");
     setActiveBudgetId(nextBudgetId);
     localStorage.setItem(ACTIVE_BUDGET_STORAGE_KEY, nextBudgetId);
-    try {
-      const [
-        loadedAccounts,
-        loadedCategories,
-        loadedTransactions,
-        loadedDebtsOther,
-        loadedGoals,
-      ] = await Promise.all([
-        listAccounts(token, nextBudgetId),
-        listCategories(token, nextBudgetId),
-        listTransactions(token, nextBudgetId, selectedDate),
-        listDebtsOther(token, nextBudgetId),
-        listGoals(token, nextBudgetId),
-      ]);
-      await loadDailyStateData(token, nextBudgetId, selectedDate);
-      setAccounts(loadedAccounts);
-      setCategories(loadedCategories);
-      setTransactions(loadedTransactions);
-      setDebtsOther(loadedDebtsOther);
-      setGoals(loadedGoals);
-    } catch (error) {
+      try {
+        const [
+          loadedAccounts,
+          loadedCategories,
+          loadedTransactions,
+          loadedGoals,
+        ] = await Promise.all([
+          listAccounts(token, nextBudgetId),
+          listCategories(token, nextBudgetId),
+          listTransactions(token, nextBudgetId, selectedDate),
+          listGoals(token, nextBudgetId),
+        ]);
+        await loadDailyStateData(token, nextBudgetId, selectedDate);
+        setAccounts(loadedAccounts);
+        setCategories(loadedCategories);
+        setTransactions(loadedTransactions);
+        setGoals(loadedGoals);
+      } catch (error) {
       setMessage(
         buildErrorMessage("Не удалось загрузить счета и категории", error),
       );
@@ -678,6 +671,7 @@ export default function HomePage() {
         selectedDate,
       );
       setTransactions(updatedTransactions);
+      await loadDailyStateData(token, activeBudgetId, selectedDate);
     } catch (error) {
       const apiError = error as Error & { status?: number; text?: string };
       setIncomeErrorDetails({
@@ -724,6 +718,7 @@ export default function HomePage() {
         selectedDate,
       );
       setTransactions(updatedTransactions);
+      await loadDailyStateData(token, activeBudgetId, selectedDate);
     } catch (error) {
       const apiError = error as Error & { status?: number; text?: string };
       setExpenseErrorDetails({
@@ -773,6 +768,7 @@ export default function HomePage() {
         selectedDate,
       );
       setTransactions(updatedTransactions);
+      await loadDailyStateData(token, activeBudgetId, selectedDate);
     } catch (error) {
       const apiError = error as Error & { status?: number; text?: string };
       setTransferErrorDetails({
@@ -796,6 +792,7 @@ export default function HomePage() {
         selectedDate,
       );
       setTransactions(updatedTransactions);
+      await loadDailyStateData(token, activeBudgetId, selectedDate);
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось удалить операцию", error));
     }
@@ -807,12 +804,8 @@ export default function HomePage() {
       return;
     }
     const amount = Number.parseInt(debtOtherAmount, 10);
-    if (!debtOtherName.trim()) {
-      setMessage("Укажите, кому должны");
-      return;
-    }
-    if (!Number.isFinite(amount) || amount < 0) {
-      setMessage("Сумма должна быть больше или равна нулю");
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setMessage("Сумма должна быть больше нуля");
       return;
     }
     setMessage("");
@@ -820,16 +813,21 @@ export default function HomePage() {
     try {
       await createDebtOther(token, {
         budget_id: activeBudgetId,
-        name: debtOtherName.trim(),
         amount,
-        note: debtOtherNote ? debtOtherNote : null,
+        direction: debtOtherDirection,
+        asset_side: debtOtherAssetSide,
+        date: selectedDate,
       });
-      setDebtOtherName("");
       setDebtOtherAmount("");
-      setDebtOtherNote("");
-      const updatedDebts = await listDebtsOther(token, activeBudgetId);
       await loadDailyStateData(token, activeBudgetId, selectedDate);
-      setDebtsOther(updatedDebts);
+      if (reportFrom && reportTo && reportFrom <= reportTo) {
+        const [balance, summary] = await Promise.all([
+          getReportBalance(token, activeBudgetId, reportFrom, reportTo),
+          getReportSummary(token, activeBudgetId),
+        ]);
+        setReportBalance(balance);
+        setReportSummary(summary);
+      }
     } catch (error) {
       const apiError = error as Error & { status?: number; text?: string };
       setDebtOtherErrorDetails({
@@ -837,21 +835,6 @@ export default function HomePage() {
         responseText: apiError.text,
       });
       setMessage(buildErrorMessage("Не удалось добавить долг", error));
-    }
-  };
-
-  const handleDeleteDebtOther = async (debtId: string) => {
-    if (!token || !activeBudgetId) {
-      return;
-    }
-    setMessage("");
-    try {
-      await deleteDebtOther(token, debtId);
-      const updatedDebts = await listDebtsOther(token, activeBudgetId);
-      await loadDailyStateData(token, activeBudgetId, selectedDate);
-      setDebtsOther(updatedDebts);
-    } catch (error) {
-      setMessage(buildErrorMessage("Не удалось удалить долг", error));
     }
   };
 
@@ -956,6 +939,7 @@ export default function HomePage() {
         cash_total: parseAmount(dailyStateForm.cash_total),
         bank_total: parseAmount(dailyStateForm.bank_total),
         debt_cards_total: parseAmount(dailyStateForm.debt_cards_total),
+        debt_other_total: parseAmount(dailyStateForm.debt_other_total),
       };
       const updated = await updateDailyState(token, payload);
       setDailyStateFromData(updated);
@@ -1266,54 +1250,54 @@ export default function HomePage() {
 
           <section>
             <h2>Долги людям</h2>
-            {debtsOther.length ? (
-              <ul>
-                {debtsOther.map((debt) => (
-                  <li key={debt.id}>
-                    <span>
-                      {debt.name}: {debt.amount} ₽
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteDebtOther(debt.id)}
-                    >
-                      Удалить
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>Нет долгов</p>
-            )}
             <form onSubmit={handleCreateDebtOther}>
               <label>
-                Кому:
-                <input
-                  type="text"
-                  value={debtOtherName}
-                  onChange={(event) => setDebtOtherName(event.target.value)}
-                  required
-                />
+                Направление:
+                <select
+                  value={debtOtherDirection}
+                  onChange={(event) =>
+                    setDebtOtherDirection(
+                      event.target.value as "borrowed" | "repaid",
+                    )
+                  }
+                >
+                  <option value="borrowed">Взял в долг</option>
+                  <option value="repaid">Отдал долг</option>
+                </select>
+              </label>
+              <label>
+                Куда пришли/откуда ушли:
+                <select
+                  value={debtOtherAssetSide}
+                  onChange={(event) =>
+                    setDebtOtherAssetSide(
+                      event.target.value as "cash" | "bank",
+                    )
+                  }
+                >
+                  <option value="cash">Наличка</option>
+                  <option value="bank">Безнал</option>
+                </select>
               </label>
               <label>
                 Сумма:
                 <input
                   type="number"
-                  min="0"
+                  min="1"
                   value={debtOtherAmount}
                   onChange={(event) => setDebtOtherAmount(event.target.value)}
                   required
                 />
               </label>
               <label>
-                Заметка:
+                Дата:
                 <input
-                  type="text"
-                  value={debtOtherNote}
-                  onChange={(event) => setDebtOtherNote(event.target.value)}
+                  type="date"
+                  value={selectedDate}
+                  readOnly
                 />
               </label>
-              <button type="submit">Добавить долг</button>
+              <button type="submit">Сохранить</button>
             </form>
             {debtOtherErrorDetails && (
               <div>

@@ -13,10 +13,8 @@ from app.repositories.budgets import ensure_default_budgets, list_budgets
 from app.repositories.categories import create_category, list_categories
 from app.repositories.daily_state import get_delta, get_state_or_default, upsert
 from app.repositories.debts_other import (
-    create_debt_other,
     delete_debt_other,
     list_debts_other,
-    sum_debts_other_as_of,
 )
 from app.repositories.transactions import (
     create_transaction,
@@ -97,9 +95,10 @@ class DailyStateOut(BaseModel):
 
 class DebtOtherCreateRequest(BaseModel):
     budget_id: str
-    name: str
-    amount: int = Field(ge=0)
-    note: str | None = None
+    amount: int = Field(gt=0)
+    direction: Literal["borrowed", "repaid"]
+    asset_side: Literal["cash", "bank"]
+    date: date | None = None
 
 
 class DebtOtherOut(BaseModel):
@@ -234,42 +233,62 @@ def get_debts_other(
 @router.post("/debts/other")
 def post_debts_other(
     payload: DebtOtherCreateRequest, current_user: dict = Depends(get_current_user)
-) -> DebtOtherOut:
-    record = create_debt_other(
+) -> DailyStateOut:
+    target_date = payload.date or _utc_today()
+    current_state = get_state_or_default(
+        current_user["sub"], payload.budget_id, target_date
+    )
+    cash_total = int(current_state.get("cash_total", 0))
+    bank_total = int(current_state.get("bank_total", 0))
+    debt_other_total = int(current_state.get("debt_other_total", 0))
+    amount = payload.amount
+
+    if payload.direction == "borrowed":
+        debt_other_total += amount
+        if payload.asset_side == "cash":
+            cash_total += amount
+        else:
+            bank_total += amount
+    else:
+        debt_other_total -= amount
+        if debt_other_total < 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Нельзя уменьшить долг ниже 0",
+            )
+        if payload.asset_side == "cash":
+            cash_total -= amount
+            if cash_total < 0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Недостаточно налички для возврата долга",
+                )
+        else:
+            bank_total -= amount
+            if bank_total < 0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Недостаточно средств на безнале для возврата долга",
+                )
+
+    updated = upsert(
         current_user["sub"],
         payload.budget_id,
-        payload.name,
-        payload.amount,
-        payload.note,
+        target_date,
+        {
+            "cash_total": cash_total,
+            "bank_total": bank_total,
+            "debt_other_total": debt_other_total,
+        },
     )
-    today = _utc_today()
-    debt_other_total = sum_debts_other_as_of(
-        current_user["sub"], payload.budget_id, today
-    )
-    upsert(
-        current_user["sub"],
-        payload.budget_id,
-        today,
-        {"debt_other_total": debt_other_total},
-    )
-    return record
+    return DailyStateOut(**updated)
 
 
 @router.delete("/debts/other/{debt_id}")
 def delete_debts_other(
     debt_id: str, current_user: dict = Depends(get_current_user)
 ) -> dict[str, str]:
-    record = delete_debt_other(current_user["sub"], debt_id)
-    today = _utc_today()
-    debt_other_total = sum_debts_other_as_of(
-        current_user["sub"], record["budget_id"], today
-    )
-    upsert(
-        current_user["sub"],
-        record["budget_id"],
-        today,
-        {"debt_other_total": debt_other_total},
-    )
+    delete_debt_other(current_user["sub"], debt_id)
     return {"status": "deleted"}
 
 
