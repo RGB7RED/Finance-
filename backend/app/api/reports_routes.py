@@ -7,6 +7,7 @@ from app.auth.jwt import get_current_user
 from app.repositories.reports import (
     balance_by_day,
     cashflow_by_day,
+    expenses_by_category,
     month_report,
     summary,
 )
@@ -58,6 +59,26 @@ class MonthReport(BaseModel):
     avg_net_per_day: int
 
 
+class ExpensesByCategoryChild(BaseModel):
+    category_id: str
+    category_name: str
+    amount: int
+    share: float
+
+
+class ExpensesByCategoryItem(BaseModel):
+    category_id: str
+    category_name: str
+    amount: int
+    share: float
+    children: list[ExpensesByCategoryChild]
+
+
+class ExpensesByCategoryReport(BaseModel):
+    total_expense: int
+    items: list[ExpensesByCategoryItem]
+
+
 @router.get("/reports/cashflow")
 def get_reports_cashflow(
     budget_id: str,
@@ -92,3 +113,20 @@ def get_reports_month(
     current_user: dict = Depends(get_current_user),
 ) -> MonthReport:
     return month_report(current_user["sub"], budget_id, month)
+
+
+@router.get("/reports/expenses-by-category")
+def get_reports_expenses_by_category(
+    budget_id: str,
+    from_date: date = Query(alias="from"),
+    to_date: date = Query(alias="to"),
+    limit: int = Query(default=10, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+) -> ExpensesByCategoryReport:
+    return expenses_by_category(
+        current_user["sub"],
+        budget_id,
+        from_date,
+        to_date,
+        limit,
+    )

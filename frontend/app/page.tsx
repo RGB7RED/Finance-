@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useEffect,
   useMemo,
   useState,
@@ -17,6 +18,7 @@ import {
   type CashflowDay,
   type Category,
   type DailyState,
+  type ExpensesByCategoryReport,
   type Goal,
   type MonthReport,
   type MonthReportDay,
@@ -38,6 +40,7 @@ import {
   feedback,
   getDailyState,
   getApiBaseUrl,
+  getExpensesByCategoryReport,
   getMe,
   getMonthReport,
   getReconcile,
@@ -144,6 +147,12 @@ export default function HomePage() {
   const [reportSummary, setReportSummary] = useState<ReportsSummary | null>(
     null,
   );
+  const [reportExpensesByCategory, setReportExpensesByCategory] =
+    useState<ExpensesByCategoryReport | null>(null);
+  const [reportExpensesLimit, setReportExpensesLimit] = useState(10);
+  const [expandedReportCategories, setExpandedReportCategories] = useState<
+    Record<string, boolean>
+  >({});
   const [selectedMonth, setSelectedMonth] = useState(() =>
     getDefaultMonth(),
   );
@@ -243,14 +252,23 @@ export default function HomePage() {
       return;
     }
     try {
-      const [cashflow, balance, summary] = await Promise.all([
+      const [cashflow, balance, summary, expensesByCategory] =
+        await Promise.all([
         getReportCashflow(token, activeBudgetId, reportFrom, reportTo),
         getReportBalance(token, activeBudgetId, reportFrom, reportTo),
         getReportSummary(token, activeBudgetId),
+        getExpensesByCategoryReport(
+          token,
+          activeBudgetId,
+          reportFrom,
+          reportTo,
+          reportExpensesLimit,
+        ),
       ]);
       setReportCashflow(cashflow);
       setReportBalance(balance);
       setReportSummary(summary);
+      setReportExpensesByCategory(expensesByCategory);
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось загрузить отчеты", error));
     }
@@ -709,7 +727,21 @@ export default function HomePage() {
 
   useEffect(() => {
     void loadReports();
-  }, [token, activeBudgetId, reportFrom, reportTo]);
+  }, [token, activeBudgetId, reportFrom, reportTo, reportExpensesLimit]);
+
+  const handleReportExpensesLimitChange = (
+    event: ChangeEvent<HTMLSelectElement>,
+  ) => {
+    setReportExpensesLimit(Number(event.target.value));
+    setExpandedReportCategories({});
+  };
+
+  const toggleReportCategory = (categoryId: string) => {
+    setExpandedReportCategories((previous) => ({
+      ...previous,
+      [categoryId]: !previous[categoryId],
+    }));
+  };
 
   useEffect(() => {
     void loadMonthReport();
@@ -1565,6 +1597,74 @@ export default function HomePage() {
                             </td>
                           </tr>
                         ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p>Нет данных</p>
+                  )}
+                </div>
+                <div>
+                  <h3>Расходы по категориям</h3>
+                  <label>
+                    Top N:
+                    <select
+                      value={reportExpensesLimit}
+                      onChange={handleReportExpensesLimitChange}
+                    >
+                      <option value={5}>5</option>
+                      <option value={10}>10</option>
+                      <option value={20}>20</option>
+                    </select>
+                  </label>
+                  {reportExpensesByCategory?.items?.length ? (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Категория</th>
+                          <th>Сумма</th>
+                          <th>Доля %</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reportExpensesByCategory.items.map((item) => {
+                          const isExpanded =
+                            expandedReportCategories[item.category_id];
+                          return (
+                            <Fragment key={item.category_id}>
+                              <tr>
+                                <td>
+                                  {item.children.length ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        toggleReportCategory(item.category_id)
+                                      }
+                                    >
+                                      {isExpanded ? "Свернуть" : "Развернуть"}
+                                    </button>
+                                  ) : null}{" "}
+                                  {item.category_name}
+                                </td>
+                                <td>{item.amount} ₽</td>
+                                <td>
+                                  {(item.share * 100).toFixed(1)}
+                                  %
+                                </td>
+                              </tr>
+                              {isExpanded
+                                ? item.children.map((child) => (
+                                    <tr key={child.category_id}>
+                                      <td>— {child.category_name}</td>
+                                      <td>{child.amount} ₽</td>
+                                      <td>
+                                        {(child.share * 100).toFixed(1)}%
+                                      </td>
+                                    </tr>
+                                  ))
+                                : null}
+                            </Fragment>
+                          );
+                        })}
                       </tbody>
                     </table>
                   ) : (
