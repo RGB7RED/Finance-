@@ -15,10 +15,16 @@ from app.repositories.budgets import (
     reset_budget_data,
 )
 from app.repositories.categories import create_category, list_categories
+from app.repositories.daily_account_balances import (
+    calculate_totals,
+    get_accounts_with_balances,
+    upsert_balances,
+)
 from app.repositories.daily_state import (
+    get_balance_for_date,
+    get_debts,
     get_delta,
-    get_state_as_of,
-    update_with_propagation,
+    upsert_debts,
 )
 from app.repositories.debts_other import (
     delete_debt_other,
@@ -86,28 +92,43 @@ class TransactionOut(BaseModel):
     created_at: str
 
 
+class DailyStateAccount(BaseModel):
+    account_id: str
+    name: str
+    kind: Literal["cash", "bank"]
+    amount: int = Field(ge=0)
+
+
+class DailyStateAccountUpdate(BaseModel):
+    account_id: str
+    amount: int = Field(ge=0)
+
+
+class DailyStateDebts(BaseModel):
+    credit_cards: int = Field(ge=0, default=0)
+    people_debts: int = Field(ge=0, default=0)
+
+
+class DailyStateTotals(BaseModel):
+    cash_total: int
+    noncash_total: int
+    assets_total: int
+    debts_total: int
+    balance_total: int
+
+
 class DailyStateUpdate(BaseModel):
     budget_id: str
     date: dt.date
-    cash_total: int | None = Field(default=None, ge=0)
-    bank_total: int | None = Field(default=None, ge=0)
-    debt_cards_total: int | None = Field(default=None, ge=0)
-    debt_other_total: int | None = Field(default=None, ge=0)
+    accounts: list[DailyStateAccountUpdate]
+    debts: DailyStateDebts | None = None
 
 
 class DailyStateOut(BaseModel):
-    budget_id: str
-    user_id: str
-    date: dt.date
-    as_of_date: dt.date
-    is_carried: bool
-    cash_total: int
-    bank_total: int
-    debt_cards_total: int
-    debt_other_total: int
-    assets_total: int
-    debts_total: int
-    balance: int
+    accounts: list[DailyStateAccount]
+    debts: DailyStateDebts
+    totals: DailyStateTotals
+    top_total: int
 
 
 class DebtOtherCreateRequest(BaseModel):
@@ -178,6 +199,40 @@ def _utc_today() -> dt.date:
     return dt.datetime.now(dt.timezone.utc).date()
 
 
+def _build_daily_state_response(
+    user_id: str, budget_id: str, target_date: dt.date
+) -> DailyStateOut:
+    accounts = get_accounts_with_balances(user_id, budget_id, target_date)
+    debts_record = get_debts(user_id, budget_id, target_date)
+    totals = calculate_totals(accounts)
+    debts_total = int(debts_record.get("debt_cards_total", 0)) + int(
+        debts_record.get("debt_other_total", 0)
+    )
+    balance_total = totals["assets_total"] - debts_total
+    balance_today, has_today = get_balance_for_date(
+        user_id, budget_id, target_date
+    )
+    balance_prev, has_prev = get_balance_for_date(
+        user_id, budget_id, target_date - dt.timedelta(days=1)
+    )
+    top_total = balance_today - balance_prev if has_today and has_prev else 0
+    return DailyStateOut(
+        accounts=accounts,
+        debts=DailyStateDebts(
+            credit_cards=int(debts_record.get("debt_cards_total", 0)),
+            people_debts=int(debts_record.get("debt_other_total", 0)),
+        ),
+        totals=DailyStateTotals(
+            cash_total=totals["cash_total"],
+            noncash_total=totals["noncash_total"],
+            assets_total=totals["assets_total"],
+            debts_total=debts_total,
+            balance_total=balance_total,
+        ),
+        top_total=top_total,
+    )
+
+
 @router.post("/auth/telegram")
 def auth_telegram(payload: TelegramAuthRequest) -> dict[str, str]:
     telegram_token = get_telegram_bot_token()
@@ -245,6 +300,14 @@ def get_accounts(
     return list_accounts(current_user["sub"], budget_id)
 
 
+@router.get("/accounts/exists")
+def get_accounts_exists(
+    budget_id: str, current_user: dict = Depends(get_current_user)
+) -> dict[str, bool]:
+    accounts = list_accounts(current_user["sub"], budget_id)
+    return {"has_accounts": len(accounts) > 0}
+
+
 @router.post("/accounts")
 def post_accounts(
     payload: AccountCreateRequest, current_user: dict = Depends(get_current_user)
@@ -306,58 +369,61 @@ def post_debts_other(
     payload: DebtOtherCreateRequest, current_user: dict = Depends(get_current_user)
 ) -> DailyStateOut:
     target_date = payload.date or _utc_today()
-    current_state = get_state_as_of(
+    accounts_with_amounts = get_accounts_with_balances(
         current_user["sub"], payload.budget_id, target_date
     )
-    cash_total = int(current_state.get("cash_total", 0))
-    bank_total = int(current_state.get("bank_total", 0))
-    debt_other_total = int(current_state.get("debt_other_total", 0))
-    amount = payload.amount
+    target_account = next(
+        (
+            account
+            for account in accounts_with_amounts
+            if account.get("kind") == payload.asset_side
+        ),
+        None,
+    )
+    if not target_account:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Нет подходящего счета для операции",
+        )
+    current_amount = int(target_account.get("amount", 0))
+    delta = payload.amount if payload.direction == "borrowed" else -payload.amount
+    next_amount = current_amount + delta
+    if next_amount < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Недостаточно средств для операции",
+        )
 
-    if payload.direction == "borrowed":
-        debt_other_total += amount
-        if payload.asset_side == "cash":
-            cash_total += amount
-        else:
-            bank_total += amount
-    else:
-        debt_other_total -= amount
-        if debt_other_total < 0:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Нельзя уменьшить долг ниже 0",
-            )
-        if payload.asset_side == "cash":
-            cash_total -= amount
-            if cash_total < 0:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Недостаточно налички для возврата долга",
-                )
-        else:
-            bank_total -= amount
-            if bank_total < 0:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Недостаточно средств на безнале для возврата долга",
-                )
+    debts_record = get_debts(current_user["sub"], payload.budget_id, target_date)
+    debt_other_total = int(debts_record.get("debt_other_total", 0)) + (
+        payload.amount if payload.direction == "borrowed" else -payload.amount
+    )
+    if debt_other_total < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Нельзя уменьшить долг ниже 0",
+        )
 
-    updated = update_with_propagation(
+    upsert_debts(
         current_user["sub"],
         payload.budget_id,
         target_date,
-        {
-            "cash_total": cash_total,
-            "bank_total": bank_total,
-            "debt_other_total": debt_other_total,
-        },
+        credit_cards=int(debts_record.get("debt_cards_total", 0)),
+        people_debts=debt_other_total,
     )
-    return DailyStateOut(
-        **{
-            **updated,
-            "as_of_date": target_date,
-            "is_carried": False,
-        }
+    upsert_balances(
+        current_user["sub"],
+        payload.budget_id,
+        target_date,
+        [
+            {
+                "account_id": target_account["account_id"],
+                "amount": next_amount,
+            }
+        ],
+    )
+    return _build_daily_state_response(
+        current_user["sub"], payload.budget_id, target_date
     )
 
 
@@ -375,29 +441,30 @@ def get_daily_state(
     date: dt.date,
     current_user: dict = Depends(get_current_user),
 ) -> DailyStateOut:
-    record = get_state_as_of(current_user["sub"], budget_id, date)
-    return DailyStateOut(**record)
+    return _build_daily_state_response(current_user["sub"], budget_id, date)
 
 
-@router.put("/daily-state")
+@router.post("/daily-state")
 def put_daily_state(
     payload: DailyStateUpdate, current_user: dict = Depends(get_current_user)
 ) -> DailyStateOut:
-    fields = payload.model_dump(
-        mode="json", exclude={"budget_id", "date"}, exclude_none=True
+    balances = [
+        {"account_id": item.account_id, "amount": item.amount}
+        for item in payload.accounts
+    ]
+    upsert_balances(
+        current_user["sub"], payload.budget_id, payload.date, balances
     )
-    record = update_with_propagation(
-        current_user["sub"],
-        payload.budget_id,
-        payload.date,
-        fields,
-    )
-    return DailyStateOut(
-        **{
-            **record,
-            "as_of_date": payload.date,
-            "is_carried": False,
-        }
+    if payload.debts is not None:
+        upsert_debts(
+            current_user["sub"],
+            payload.budget_id,
+            payload.date,
+            credit_cards=payload.debts.credit_cards,
+            people_debts=payload.debts.people_debts,
+        )
+    return _build_daily_state_response(
+        current_user["sub"], payload.budget_id, payload.date
     )
 
 

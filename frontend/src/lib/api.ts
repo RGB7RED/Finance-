@@ -189,19 +189,31 @@ export type Suggestion = {
   pattern: string | null;
 };
 
-export type DailyState = {
-  budget_id: string;
-  user_id: string;
-  date: string;
-  as_of_date: string;
-  is_carried: boolean;
+export type DailyStateAccount = {
+  account_id: string;
+  name: string;
+  kind: "cash" | "bank";
+  amount: number;
+};
+
+export type DailyStateDebts = {
+  credit_cards: number;
+  people_debts: number;
+};
+
+export type DailyStateTotals = {
   cash_total: number;
-  bank_total: number;
-  debt_cards_total: number;
-  debt_other_total: number;
+  noncash_total: number;
   assets_total: number;
   debts_total: number;
-  balance: number;
+  balance_total: number;
+};
+
+export type DailyState = {
+  accounts: DailyStateAccount[];
+  debts: DailyStateDebts;
+  totals: DailyStateTotals;
+  top_total: number;
 };
 
 export type Goal = {
@@ -320,6 +332,16 @@ export const listAccounts = async (
 ): Promise<Account[]> => {
   const query = new URLSearchParams({ budget_id: budgetId });
   return requestJson(`/accounts?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const getAccountsExists = async (
+  token: string,
+  budgetId: string,
+): Promise<{ has_accounts: boolean }> => {
+  const query = new URLSearchParams({ budget_id: budgetId });
+  return requestJson(`/accounts/exists?${query.toString()}`, {
     headers: authHeaders(token),
   });
 };
@@ -593,10 +615,8 @@ export const updateDailyState = async (
   payload: {
     budget_id: string;
     date: string;
-    cash_total?: number;
-    bank_total?: number;
-    debt_cards_total?: number;
-    debt_other_total?: number;
+    accounts: { account_id: string; amount: number }[];
+    debts?: { credit_cards: number; people_debts: number };
   },
 ): Promise<DailyState> => {
   if (!API_BASE_URL) {
@@ -606,7 +626,7 @@ export const updateDailyState = async (
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}/daily-state`, {
-      method: "PUT",
+      method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...authHeaders(token),

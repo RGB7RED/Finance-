@@ -102,6 +102,18 @@ create table if not exists public.daily_state (
     unique (budget_id, date)
 );
 
+create table if not exists public.daily_account_balances (
+    id uuid primary key default gen_random_uuid(),
+    budget_id uuid not null references public.budgets(id) on delete cascade,
+    user_id uuid not null references public.users(id) on delete cascade,
+    date date not null,
+    account_id uuid not null references public.accounts(id) on delete cascade,
+    amount integer not null default 0,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    unique (budget_id, user_id, date, account_id)
+);
+
 create table if not exists public.debts_other (
     id uuid primary key default gen_random_uuid(),
     budget_id uuid not null references public.budgets(id) on delete cascade,
