@@ -18,7 +18,7 @@ from app.repositories.categories import create_category, list_categories
 from app.repositories.daily_state import (
     get_delta,
     get_state_as_of,
-    upsert_with_base,
+    update_with_propagation,
 )
 from app.repositories.debts_other import (
     delete_debt_other,
@@ -289,7 +289,7 @@ def post_debts_other(
                     detail="Недостаточно средств на безнале для возврата долга",
                 )
 
-    updated = upsert_with_base(
+    updated = update_with_propagation(
         current_user["sub"],
         payload.budget_id,
         target_date,
@@ -333,7 +333,7 @@ def put_daily_state(
     fields = payload.model_dump(
         mode="json", exclude={"budget_id", "date"}, exclude_none=True
     )
-    record = upsert_with_base(
+    record = update_with_propagation(
         current_user["sub"],
         payload.budget_id,
         payload.date,
