@@ -221,6 +221,14 @@ export type ReportsSummary = {
   goals_active: ReportsGoal[];
 };
 
+export type ReconcileSummary = {
+  date: string;
+  bottom_total: number;
+  top_total: number;
+  diff: number;
+  is_ok: boolean;
+};
+
 const authHeaders = (token: string) => ({
   Authorization: `Bearer ${token}`,
 });
@@ -442,6 +450,17 @@ export const getDailyDelta = async (
 ): Promise<{ top_day_total: number }> => {
   const query = new URLSearchParams({ budget_id: budgetId, date });
   return requestJson(`/daily-state/delta?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const getReconcile = async (
+  token: string,
+  budgetId: string,
+  date: string,
+): Promise<ReconcileSummary> => {
+  const query = new URLSearchParams({ budget_id: budgetId, date });
+  return requestJson(`/reconcile?${query.toString()}`, {
     headers: authHeaders(token),
   });
 };

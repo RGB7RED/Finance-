@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.integrations.supabase_client import get_supabase_client
-from app.repositories.daily_state import get_state_or_default
+from app.repositories.daily_state import get_state_as_of, get_state_or_default
 
 
 def _ensure_budget_access(user_id: str, budget_id: str) -> None:
@@ -172,4 +172,45 @@ def summary(user_id: str, budget_id: str) -> dict[str, Any]:
         "debt_cards_total": int(daily_state.get("debt_cards_total", 0)),
         "debt_other_total": int(daily_state.get("debt_other_total", 0)),
         "goals_active": goals_active,
+    }
+
+
+def balance_as_of_date(user_id: str, budget_id: str, target_date: date) -> int:
+    state = get_state_as_of(user_id, budget_id, target_date)
+    return int(state.get("balance", 0))
+
+
+def reconcile_by_date(
+    user_id: str, budget_id: str, target_date: date
+) -> dict[str, Any]:
+    _ensure_budget_access(user_id, budget_id)
+    client = get_supabase_client()
+    response = (
+        client.table("transactions")
+        .select("type, amount")
+        .eq("budget_id", budget_id)
+        .eq("user_id", user_id)
+        .eq("date", target_date.isoformat())
+        .execute()
+    )
+    bottom_total = 0
+    for item in response.data or []:
+        tx_type = item.get("type")
+        amount = int(item.get("amount", 0))
+        if tx_type == "income":
+            bottom_total += amount
+        elif tx_type == "expense":
+            bottom_total -= amount
+    balance_today = balance_as_of_date(user_id, budget_id, target_date)
+    balance_prev = balance_as_of_date(
+        user_id, budget_id, target_date - timedelta(days=1)
+    )
+    top_total = balance_today - balance_prev
+    diff = top_total - bottom_total
+    return {
+        "date": target_date.isoformat(),
+        "bottom_total": bottom_total,
+        "top_total": top_total,
+        "diff": diff,
+        "is_ok": abs(diff) <= 1,
     }

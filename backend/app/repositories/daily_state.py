@@ -239,6 +239,113 @@ def upsert_with_base(
     return {**record, **_calculate_totals(record)}
 
 
+def apply_forward_delta(
+    user_id: str,
+    budget_id: str,
+    target_date: date,
+    delta_cash: int,
+    delta_bank: int,
+) -> None:
+    if delta_cash == 0 and delta_bank == 0:
+        return
+    _ensure_budget_access(user_id, budget_id)
+    client = get_supabase_client()
+    response = (
+        client.table("daily_state")
+        .select("id, date, cash_total, bank_total")
+        .eq("budget_id", budget_id)
+        .eq("user_id", user_id)
+        .gt("date", target_date.isoformat())
+        .order("date")
+        .execute()
+    )
+    records = response.data or []
+    if not records:
+        return
+    for record in records:
+        next_cash = int(record.get("cash_total", 0)) + delta_cash
+        next_bank = int(record.get("bank_total", 0)) + delta_bank
+        if next_cash < 0 or next_bank < 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Нельзя уменьшить остатки ниже 0",
+            )
+    for record in records:
+        update_fields: dict[str, int] = {}
+        if delta_cash != 0:
+            update_fields["cash_total"] = (
+                int(record.get("cash_total", 0)) + delta_cash
+            )
+        if delta_bank != 0:
+            update_fields["bank_total"] = (
+                int(record.get("bank_total", 0)) + delta_bank
+            )
+        if not update_fields:
+            continue
+        try:
+            client.table("daily_state").update(update_fields).eq(
+                "id", record.get("id")
+            ).execute()
+        except APIError as exc:
+            _raise_postgrest_http_error(exc)
+
+
+def update_with_propagation(
+    user_id: str,
+    budget_id: str,
+    target_date: date,
+    fields: dict[str, int],
+) -> dict[str, Any]:
+    existing = get_state(user_id, budget_id, target_date)
+    if existing is not None:
+        old_totals = _totals_from_record(existing)
+    else:
+        old_totals = _totals_from_record(
+            get_state_as_of(user_id, budget_id, target_date)
+        )
+    next_totals = {
+        **old_totals,
+        **{key: int(value) for key, value in fields.items()},
+    }
+    for key in (
+        "cash_total",
+        "bank_total",
+        "debt_cards_total",
+        "debt_other_total",
+    ):
+        if next_totals[key] < 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Значение не может быть меньше 0",
+            )
+    payload = {
+        "budget_id": budget_id,
+        "user_id": user_id,
+        "date": target_date.isoformat(),
+        **next_totals,
+    }
+    client = get_supabase_client()
+    try:
+        response = (
+            client.table("daily_state")
+            .upsert(payload, on_conflict="budget_id,date")
+            .execute()
+        )
+    except APIError as exc:
+        _raise_postgrest_http_error(exc)
+    data = response.data or []
+    if not data:
+        raise RuntimeError("Failed to update daily state")
+    record = data[0]
+    delta_cash = next_totals["cash_total"] - old_totals["cash_total"]
+    delta_bank = next_totals["bank_total"] - old_totals["bank_total"]
+    if delta_cash != 0 or delta_bank != 0:
+        apply_forward_delta(
+            user_id, budget_id, target_date, delta_cash, delta_bank
+        )
+    return {**record, **_calculate_totals(record)}
+
+
 def get_balance(user_id: str, budget_id: str, target_date: date) -> int:
     record = get_state_or_default(user_id, budget_id, target_date)
     return int(record["balance"])
