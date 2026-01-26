@@ -172,6 +172,7 @@ export default function HomePage() {
     useState<FormErrorDetails | null>(null);
   const [quickAdjustError, setQuickAdjustError] = useState<string | null>(null);
   const [isQuickAdjusting, setIsQuickAdjusting] = useState(false);
+  const [lastQuickAdjustClick, setLastQuickAdjustClick] = useState("");
 
   const setDailyStateFromData = (state: DailyState) => {
     setDailyState(state);
@@ -961,16 +962,36 @@ export default function HomePage() {
     field: "cash_total" | "bank_total",
     delta: number,
   ) => {
+    const clickStamp = new Date().toISOString();
+    setLastQuickAdjustClick(clickStamp);
+    console.log("[quick-adjust] click", {
+      clickStamp,
+      field,
+      delta,
+      hasEvent: Boolean(event),
+    });
     event?.preventDefault?.();
     if (!token || !activeBudgetId) {
+      console.log("[quick-adjust] guard: missing token/budget", {
+        tokenMissing: !token,
+        activeBudgetMissing: !activeBudgetId,
+      });
       return;
     }
     if (isQuickAdjusting) {
+      console.log("[quick-adjust] guard: isQuickAdjusting", {
+        isQuickAdjusting,
+      });
       return;
     }
     const currentValue = parseAmount(dailyStateForm[field]);
     const nextValue = currentValue + delta;
     if (nextValue < 0) {
+      console.log("[quick-adjust] guard: nextValue < 0", {
+        currentValue,
+        nextValue,
+        delta,
+      });
       setMessage("Нельзя уменьшить ниже нуля");
       return;
     }
@@ -979,11 +1000,18 @@ export default function HomePage() {
     setQuickAdjustError(null);
     setIsQuickAdjusting(true);
     try {
+      console.log("[quick-adjust] sending update", {
+        budgetId: activeBudgetId,
+        date: selectedDate,
+        field,
+        nextValue,
+      });
       await updateDailyState(token, {
         budget_id: activeBudgetId,
         date: selectedDate,
         [field]: nextValue,
       });
+      console.log("[quick-adjust] updateDailyState ok");
       await loadDailyStateData(token, activeBudgetId, selectedDate);
       await loadReports();
     } catch (error) {
@@ -995,6 +1023,7 @@ export default function HomePage() {
       setQuickAdjustError(String(error));
       setMessage(buildErrorMessage("Не удалось обновить состояние дня", error));
     } finally {
+      console.log("[quick-adjust] finally: reset isQuickAdjusting");
       setIsQuickAdjusting(false);
     }
   };
@@ -1529,6 +1558,9 @@ export default function HomePage() {
 
           <section>
             <h2>Сверка</h2>
+            <p style={{ fontSize: "12px", opacity: 0.7 }}>
+              lastQuickAdjustClick: {lastQuickAdjustClick || "—"}
+            </p>
             {isReconciled ? (
               <p>Сверка: OK</p>
             ) : (
