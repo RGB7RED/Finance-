@@ -1,0 +1,63 @@
+from datetime import date
+
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
+
+from app.auth.jwt import get_current_user
+from app.repositories.reports import balance_by_day, cashflow_by_day, summary
+
+router = APIRouter()
+
+
+class CashflowDay(BaseModel):
+    date: date
+    income_total: int
+    expense_total: int
+    net_total: int
+
+
+class BalanceDay(BaseModel):
+    date: date
+    assets_total: int
+    debts_total: int
+    balance: int
+
+
+class ReportsGoal(BaseModel):
+    title: str
+    target: int
+    current: int
+    deadline: date | None = None
+
+
+class ReportsSummary(BaseModel):
+    debt_cards_total: int
+    debt_other_total: int
+    goals_active: list[ReportsGoal]
+
+
+@router.get("/reports/cashflow")
+def get_reports_cashflow(
+    budget_id: str,
+    from_date: date = Query(alias="from"),
+    to_date: date = Query(alias="to"),
+    current_user: dict = Depends(get_current_user),
+) -> list[CashflowDay]:
+    return cashflow_by_day(current_user["sub"], budget_id, from_date, to_date)
+
+
+@router.get("/reports/balance")
+def get_reports_balance(
+    budget_id: str,
+    from_date: date = Query(alias="from"),
+    to_date: date = Query(alias="to"),
+    current_user: dict = Depends(get_current_user),
+) -> list[BalanceDay]:
+    return balance_by_day(current_user["sub"], budget_id, from_date, to_date)
+
+
+@router.get("/reports/summary")
+def get_reports_summary(
+    budget_id: str, current_user: dict = Depends(get_current_user)
+) -> ReportsSummary:
+    return summary(current_user["sub"], budget_id)
