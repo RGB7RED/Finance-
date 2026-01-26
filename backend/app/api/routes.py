@@ -1,5 +1,5 @@
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,6 +12,11 @@ from app.repositories.accounts import create_account, list_accounts
 from app.repositories.budgets import ensure_default_budgets, list_budgets
 from app.repositories.categories import create_category, list_categories
 from app.repositories.daily_state import get_delta, get_or_create, upsert
+from app.repositories.debts_other import (
+    create_debt_other,
+    delete_debt_other,
+    list_debts_other,
+)
 from app.repositories.transactions import (
     create_transaction,
     delete_transaction,
@@ -87,6 +92,27 @@ class DailyStateOut(BaseModel):
     assets_total: int
     debts_total: int
     balance: int
+
+
+class DebtOtherCreateRequest(BaseModel):
+    budget_id: str
+    name: str
+    amount: int = Field(ge=0)
+    note: str | None = None
+
+
+class DebtOtherOut(BaseModel):
+    id: str
+    budget_id: str
+    user_id: str
+    name: str
+    amount: int
+    note: str | None = None
+    created_at: str
+
+
+def _utc_today() -> date:
+    return datetime.now(timezone.utc).date()
 
 
 @router.post("/auth/telegram")
@@ -194,6 +220,37 @@ def delete_transactions(
     tx_id: str, current_user: dict = Depends(get_current_user)
 ) -> dict[str, str]:
     delete_transaction(current_user["sub"], tx_id)
+    return {"status": "deleted"}
+
+
+@router.get("/debts/other")
+def get_debts_other(
+    budget_id: str, current_user: dict = Depends(get_current_user)
+) -> list[DebtOtherOut]:
+    return list_debts_other(current_user["sub"], budget_id)
+
+
+@router.post("/debts/other")
+def post_debts_other(
+    payload: DebtOtherCreateRequest, current_user: dict = Depends(get_current_user)
+) -> DebtOtherOut:
+    record = create_debt_other(
+        current_user["sub"],
+        payload.budget_id,
+        payload.name,
+        payload.amount,
+        payload.note,
+    )
+    get_or_create(current_user["sub"], payload.budget_id, _utc_today())
+    return record
+
+
+@router.delete("/debts/other/{debt_id}")
+def delete_debts_other(
+    debt_id: str, current_user: dict = Depends(get_current_user)
+) -> dict[str, str]:
+    record = delete_debt_other(current_user["sub"], debt_id)
+    get_or_create(current_user["sub"], record["budget_id"], _utc_today())
     return {"status": "deleted"}
 
 

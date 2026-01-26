@@ -179,6 +179,16 @@ export type DailyState = {
   balance: number;
 };
 
+export type DebtOther = {
+  id: string;
+  budget_id: string;
+  user_id: string;
+  name: string;
+  amount: number;
+  note: string | null;
+  created_at: string;
+};
+
 const authHeaders = (token: string) => ({
   Authorization: `Bearer ${token}`,
 });
@@ -393,3 +403,57 @@ export const getDailyDelta = async (
     headers: authHeaders(token),
   });
 };
+
+export const listDebtsOther = async (
+  token: string,
+  budgetId: string,
+): Promise<DebtOther[]> => {
+  const query = new URLSearchParams({ budget_id: budgetId });
+  return requestJson(`/debts/other?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const createDebtOther = async (
+  token: string,
+  payload: {
+    budget_id: string;
+    name: string;
+    amount: number;
+    note?: string | null;
+  },
+): Promise<DebtOther> => {
+  if (!API_BASE_URL) {
+    throw buildError("API недоступен");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/debts/other`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw buildError("API недоступен");
+  }
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw buildError("Request failed", response.status, responseText);
+  }
+
+  return (await response.json()) as DebtOther;
+};
+
+export const deleteDebtOther = async (
+  token: string,
+  id: string,
+): Promise<{ status: string }> =>
+  requestJson(`/debts/other/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });

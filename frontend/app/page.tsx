@@ -14,11 +14,14 @@ import {
   type Budget,
   type Category,
   type DailyState,
+  type DebtOther,
   type Transaction,
   authTelegram,
   createAccount,
   createCategory,
+  createDebtOther,
   createTransaction,
+  deleteDebtOther,
   deleteTransaction,
   ensureDefaultBudgets,
   getDailyDelta,
@@ -29,6 +32,7 @@ import {
   listAccounts,
   listBudgets,
   listCategories,
+  listDebtsOther,
   listTransactions,
   updateDailyState,
 } from "../src/lib/api";
@@ -77,6 +81,7 @@ export default function HomePage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [debtsOther, setDebtsOther] = useState<DebtOther[]>([]);
   const [dailyState, setDailyState] = useState<DailyState | null>(null);
   const [dailyDelta, setDailyDelta] = useState<number | null>(null);
   const [dailyStateForm, setDailyStateForm] = useState({
@@ -106,6 +111,9 @@ export default function HomePage() {
   const [transferToAccountId, setTransferToAccountId] = useState("");
   const [transferAmount, setTransferAmount] = useState("");
   const [transferNote, setTransferNote] = useState("");
+  const [debtOtherName, setDebtOtherName] = useState("");
+  const [debtOtherAmount, setDebtOtherAmount] = useState("");
+  const [debtOtherNote, setDebtOtherNote] = useState("");
   const [authErrorDetails, setAuthErrorDetails] =
     useState<AuthErrorDetails | null>(null);
   const [healthErrorDetails, setHealthErrorDetails] =
@@ -119,6 +127,8 @@ export default function HomePage() {
   const [expenseErrorDetails, setExpenseErrorDetails] =
     useState<FormErrorDetails | null>(null);
   const [transferErrorDetails, setTransferErrorDetails] =
+    useState<FormErrorDetails | null>(null);
+  const [debtOtherErrorDetails, setDebtOtherErrorDetails] =
     useState<FormErrorDetails | null>(null);
 
   const setDailyStateFromData = (state: DailyState) => {
@@ -301,16 +311,22 @@ export default function HomePage() {
       setActiveBudgetId(nextBudgetId);
 
       try {
-        const [loadedAccounts, loadedCategories, loadedTransactions] =
-          await Promise.all([
-            listAccounts(resolvedToken, nextBudgetId),
-            listCategories(resolvedToken, nextBudgetId),
-            listTransactions(resolvedToken, nextBudgetId, selectedDate),
-            loadDailyStateData(resolvedToken, nextBudgetId, selectedDate),
-          ]);
+        const [
+          loadedAccounts,
+          loadedCategories,
+          loadedTransactions,
+          loadedDebtsOther,
+        ] = await Promise.all([
+          listAccounts(resolvedToken, nextBudgetId),
+          listCategories(resolvedToken, nextBudgetId),
+          listTransactions(resolvedToken, nextBudgetId, selectedDate),
+          listDebtsOther(resolvedToken, nextBudgetId),
+        ]);
+        await loadDailyStateData(resolvedToken, nextBudgetId, selectedDate);
         setAccounts(loadedAccounts);
         setCategories(loadedCategories);
         setTransactions(loadedTransactions);
+        setDebtsOther(loadedDebtsOther);
         setStatus("ready");
       } catch (error) {
         setStatus("error");
@@ -333,6 +349,7 @@ export default function HomePage() {
     setAccounts([]);
     setCategories([]);
     setTransactions([]);
+    setDebtsOther([]);
     setDailyState(null);
     setDailyDelta(null);
     setDailyStateForm({
@@ -341,6 +358,9 @@ export default function HomePage() {
       debt_cards_total: "",
       debt_other_total: "",
     });
+    setDebtOtherName("");
+    setDebtOtherAmount("");
+    setDebtOtherNote("");
   };
 
   const categoryMap = useMemo(() => {
@@ -424,16 +444,22 @@ export default function HomePage() {
     setActiveBudgetId(nextBudgetId);
     localStorage.setItem(ACTIVE_BUDGET_STORAGE_KEY, nextBudgetId);
     try {
-      const [loadedAccounts, loadedCategories, loadedTransactions] =
-        await Promise.all([
-          listAccounts(token, nextBudgetId),
-          listCategories(token, nextBudgetId),
-          listTransactions(token, nextBudgetId, selectedDate),
-          loadDailyStateData(token, nextBudgetId, selectedDate),
-        ]);
+      const [
+        loadedAccounts,
+        loadedCategories,
+        loadedTransactions,
+        loadedDebtsOther,
+      ] = await Promise.all([
+        listAccounts(token, nextBudgetId),
+        listCategories(token, nextBudgetId),
+        listTransactions(token, nextBudgetId, selectedDate),
+        listDebtsOther(token, nextBudgetId),
+      ]);
+      await loadDailyStateData(token, nextBudgetId, selectedDate);
       setAccounts(loadedAccounts);
       setCategories(loadedCategories);
       setTransactions(loadedTransactions);
+      setDebtsOther(loadedDebtsOther);
     } catch (error) {
       setMessage(
         buildErrorMessage("Не удалось загрузить счета и категории", error),
@@ -447,10 +473,12 @@ export default function HomePage() {
         return;
       }
       try {
-        const [loadedTransactions] = await Promise.all([
-          listTransactions(token, activeBudgetId, selectedDate),
-          loadDailyStateData(token, activeBudgetId, selectedDate),
-        ]);
+        const loadedTransactions = await listTransactions(
+          token,
+          activeBudgetId,
+          selectedDate,
+        );
+        await loadDailyStateData(token, activeBudgetId, selectedDate);
         setTransactions(loadedTransactions);
       } catch (error) {
         setMessage(buildErrorMessage("Не удалось загрузить операции", error));
@@ -671,6 +699,60 @@ export default function HomePage() {
     }
   };
 
+  const handleCreateDebtOther = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    const amount = Number.parseInt(debtOtherAmount, 10);
+    if (!debtOtherName.trim()) {
+      setMessage("Укажите, кому должны");
+      return;
+    }
+    if (!Number.isFinite(amount) || amount < 0) {
+      setMessage("Сумма должна быть больше или равна нулю");
+      return;
+    }
+    setMessage("");
+    setDebtOtherErrorDetails(null);
+    try {
+      await createDebtOther(token, {
+        budget_id: activeBudgetId,
+        name: debtOtherName.trim(),
+        amount,
+        note: debtOtherNote ? debtOtherNote : null,
+      });
+      setDebtOtherName("");
+      setDebtOtherAmount("");
+      setDebtOtherNote("");
+      const updatedDebts = await listDebtsOther(token, activeBudgetId);
+      await loadDailyStateData(token, activeBudgetId, selectedDate);
+      setDebtsOther(updatedDebts);
+    } catch (error) {
+      const apiError = error as Error & { status?: number; text?: string };
+      setDebtOtherErrorDetails({
+        httpStatus: apiError.status,
+        responseText: apiError.text,
+      });
+      setMessage(buildErrorMessage("Не удалось добавить долг", error));
+    }
+  };
+
+  const handleDeleteDebtOther = async (debtId: string) => {
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    setMessage("");
+    try {
+      await deleteDebtOther(token, debtId);
+      const updatedDebts = await listDebtsOther(token, activeBudgetId);
+      await loadDailyStateData(token, activeBudgetId, selectedDate);
+      setDebtsOther(updatedDebts);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось удалить долг", error));
+    }
+  };
+
   const handleDailyStateChange = (
     field: keyof typeof dailyStateForm,
     value: string,
@@ -693,7 +775,6 @@ export default function HomePage() {
         cash_total: parseAmount(dailyStateForm.cash_total),
         bank_total: parseAmount(dailyStateForm.bank_total),
         debt_cards_total: parseAmount(dailyStateForm.debt_cards_total),
-        debt_other_total: parseAmount(dailyStateForm.debt_other_total),
       };
       const updated = await updateDailyState(token, payload);
       setDailyStateFromData(updated);
@@ -871,12 +952,7 @@ export default function HomePage() {
                   type="number"
                   min="0"
                   value={dailyStateForm.debt_other_total}
-                  onChange={(event) =>
-                    handleDailyStateChange(
-                      "debt_other_total",
-                      event.target.value,
-                    )
-                  }
+                  readOnly
                 />
               </label>
             </div>
@@ -887,6 +963,71 @@ export default function HomePage() {
             <button type="button" onClick={handleSaveDailyState}>
               Сохранить состояние дня
             </button>
+          </section>
+
+          <section>
+            <h2>Долги людям</h2>
+            {debtsOther.length ? (
+              <ul>
+                {debtsOther.map((debt) => (
+                  <li key={debt.id}>
+                    <span>
+                      {debt.name}: {debt.amount} ₽
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteDebtOther(debt.id)}
+                    >
+                      Удалить
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>Нет долгов</p>
+            )}
+            <form onSubmit={handleCreateDebtOther}>
+              <label>
+                Кому:
+                <input
+                  type="text"
+                  value={debtOtherName}
+                  onChange={(event) => setDebtOtherName(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Сумма:
+                <input
+                  type="number"
+                  min="0"
+                  value={debtOtherAmount}
+                  onChange={(event) => setDebtOtherAmount(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Заметка:
+                <input
+                  type="text"
+                  value={debtOtherNote}
+                  onChange={(event) => setDebtOtherNote(event.target.value)}
+                />
+              </label>
+              <button type="submit">Добавить долг</button>
+            </form>
+            {debtOtherErrorDetails && (
+              <div>
+                <p>
+                  debt_http_status:{" "}
+                  {debtOtherErrorDetails.httpStatus ?? "unknown"}
+                </p>
+                <p>
+                  debt_response_text:{" "}
+                  {debtOtherErrorDetails.responseText ?? "unknown"}
+                </p>
+              </div>
+            )}
           </section>
 
           <section>
