@@ -114,15 +114,23 @@ def _totals_from_record(record: dict[str, Any]) -> dict[str, int]:
 
 def get_state_as_of(
     user_id: str, budget_id: str, target_date: date
-) -> dict[str, int]:
+) -> dict[str, Any]:
     record = get_state(user_id, budget_id, target_date)
     if record is not None:
-        return _totals_from_record(record)
+        return {
+            **record,
+            **_calculate_totals(record),
+            "as_of_date": target_date.isoformat(),
+            "is_carried": False,
+        }
     _ensure_budget_access(user_id, budget_id)
     client = get_supabase_client()
     response = (
         client.table("daily_state")
-        .select("cash_total, bank_total, debt_cards_total, debt_other_total")
+        .select(
+            "budget_id, user_id, date, cash_total, bank_total, "
+            "debt_cards_total, debt_other_total"
+        )
         .eq("budget_id", budget_id)
         .lt("date", target_date.isoformat())
         .order("date", desc=True)
@@ -131,12 +139,33 @@ def get_state_as_of(
     )
     data = response.data or []
     if data:
-        return _totals_from_record(data[0])
-    return {
+        record = data[0]
+        carried = {
+            "budget_id": budget_id,
+            "user_id": user_id,
+            "date": target_date.isoformat(),
+            **_totals_from_record(record),
+        }
+        return {
+            **carried,
+            **_calculate_totals(carried),
+            "as_of_date": record.get("date", target_date.isoformat()),
+            "is_carried": True,
+        }
+    record = {
+        "budget_id": budget_id,
+        "user_id": user_id,
+        "date": target_date.isoformat(),
         "cash_total": 0,
         "bank_total": 0,
         "debt_cards_total": 0,
         "debt_other_total": 0,
+    }
+    return {
+        **record,
+        **_calculate_totals(record),
+        "as_of_date": target_date.isoformat(),
+        "is_carried": False,
     }
 
 
@@ -184,7 +213,10 @@ def upsert_with_base(
     fields: dict[str, int],
 ) -> dict[str, Any]:
     base = get_state_as_of(user_id, budget_id, target_date)
-    merged = {**base, **{key: int(value) for key, value in fields.items()}}
+    merged = {
+        **_totals_from_record(base),
+        **{key: int(value) for key, value in fields.items()},
+    }
     payload = {
         "budget_id": budget_id,
         "user_id": user_id,
