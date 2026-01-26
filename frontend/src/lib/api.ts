@@ -170,6 +170,8 @@ export type DailyState = {
   budget_id: string;
   user_id: string;
   date: string;
+  as_of_date: string;
+  is_carried: boolean;
   cash_total: number;
   bank_total: number;
   debt_cards_total: number;
