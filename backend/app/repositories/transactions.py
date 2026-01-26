@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import date, datetime
 from typing import Any
 
 from fastapi import HTTPException, status
+from fastapi.encoders import jsonable_encoder
 from postgrest.exceptions import APIError
 
 from app.integrations.supabase_client import get_supabase_client
@@ -76,6 +76,10 @@ def list_transactions(
     return response.data or []
 
 
+def _serialize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return jsonable_encoder(payload)
+
+
 def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     budget_id = payload.get("budget_id")
     if not budget_id:
@@ -134,15 +138,13 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             detail="Invalid transaction type",
         )
 
-    tx_date = payload.get("date")
-    if isinstance(tx_date, (date, datetime)):
-        payload = {**payload, "date": tx_date.isoformat()}
+    serialized_payload = _serialize_payload(payload)
 
     client = get_supabase_client()
     try:
         response = (
             client.table("transactions")
-            .insert({**payload, "user_id": user_id})
+            .insert({**serialized_payload, "user_id": user_id})
             .execute()
         )
     except APIError as exc:
