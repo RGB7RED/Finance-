@@ -214,3 +214,124 @@ def reconcile_by_date(
         "diff": diff,
         "is_ok": abs(diff) <= 1,
     }
+
+
+def month_report(user_id: str, budget_id: str, month: str) -> dict[str, Any]:
+    try:
+        parsed_month = datetime.strptime(month, "%Y-%m")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid month format",
+        ) from exc
+
+    date_from = date(parsed_month.year, parsed_month.month, 1)
+    if parsed_month.month == 12:
+        date_to = date(parsed_month.year + 1, 1, 1)
+    else:
+        date_to = date(parsed_month.year, parsed_month.month + 1, 1)
+
+    _ensure_budget_access(user_id, budget_id)
+    client = get_supabase_client()
+
+    cashflow_response = (
+        client.table("transactions")
+        .select("date, type, amount")
+        .eq("budget_id", budget_id)
+        .eq("user_id", user_id)
+        .gte("date", date_from.isoformat())
+        .lt("date", date_to.isoformat())
+        .order("date")
+        .execute()
+    )
+
+    start_day = date_from - timedelta(days=1)
+    balance_response = (
+        client.table("daily_state")
+        .select(
+            "date, cash_total, bank_total, debt_cards_total, debt_other_total"
+        )
+        .eq("budget_id", budget_id)
+        .eq("user_id", user_id)
+        .gte("date", start_day.isoformat())
+        .lt("date", date_to.isoformat())
+        .order("date")
+        .execute()
+    )
+
+    end_day = date_to - timedelta(days=1)
+    days = _date_range(date_from, end_day)
+    cashflow_totals = {
+        day.isoformat(): {"income_total": 0, "expense_total": 0}
+        for day in days
+    }
+    for item in cashflow_response.data or []:
+        tx_date = item.get("date")
+        if tx_date not in cashflow_totals:
+            continue
+        tx_type = item.get("type")
+        amount = int(item.get("amount", 0))
+        if tx_type == "income":
+            cashflow_totals[tx_date]["income_total"] += amount
+        elif tx_type == "expense":
+            cashflow_totals[tx_date]["expense_total"] += amount
+
+    balance_records = {
+        item.get("date"): item for item in balance_response.data or []
+    }
+
+    month_income = 0
+    month_expense = 0
+    report_days = []
+    for day in days:
+        key = day.isoformat()
+        income_total = cashflow_totals[key]["income_total"]
+        expense_total = cashflow_totals[key]["expense_total"]
+        bottom_total = income_total - expense_total
+        month_income += income_total
+        month_expense += expense_total
+
+        today_state = balance_records.get(key)
+        prev_state = balance_records.get(
+            (day - timedelta(days=1)).isoformat()
+        )
+        if today_state and prev_state:
+            today_balance = (
+                int(today_state.get("cash_total", 0))
+                + int(today_state.get("bank_total", 0))
+                - int(today_state.get("debt_cards_total", 0))
+                - int(today_state.get("debt_other_total", 0))
+            )
+            prev_balance = (
+                int(prev_state.get("cash_total", 0))
+                + int(prev_state.get("bank_total", 0))
+                - int(prev_state.get("debt_cards_total", 0))
+                - int(prev_state.get("debt_other_total", 0))
+            )
+            top_total = today_balance - prev_balance
+        else:
+            top_total = 0
+
+        diff = top_total - bottom_total
+        report_days.append(
+            {
+                "date": key,
+                "top_total": top_total,
+                "bottom_total": bottom_total,
+                "diff": diff,
+            }
+        )
+
+    month_net = month_income - month_expense
+    avg_net_per_day = (
+        round(month_net / len(days)) if days else 0
+    )
+
+    return {
+        "month": month,
+        "days": report_days,
+        "month_income": month_income,
+        "month_expense": month_expense,
+        "month_net": month_net,
+        "avg_net_per_day": avg_net_per_day,
+    }

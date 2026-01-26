@@ -244,6 +244,22 @@ export type ReportsSummary = {
   goals_active: ReportsGoal[];
 };
 
+export type MonthReportDay = {
+  date: string;
+  top_total: number;
+  bottom_total: number;
+  diff: number;
+};
+
+export type MonthReport = {
+  month: string;
+  days: MonthReportDay[];
+  month_income: number;
+  month_expense: number;
+  month_net: number;
+  avg_net_per_day: number;
+};
+
 export type ReconcileSummary = {
   date: string;
   bottom_total: number;
@@ -777,6 +793,17 @@ export const getReportSummary = async (
 ): Promise<ReportsSummary> => {
   const query = new URLSearchParams({ budget_id: budgetId });
   return requestJson(`/reports/summary?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const getMonthReport = async (
+  token: string,
+  budgetId: string,
+  month: string,
+): Promise<MonthReport> => {
+  const query = new URLSearchParams({ budget_id: budgetId, month });
+  return requestJson(`/reports/month?${query.toString()}`, {
     headers: authHeaders(token),
   });
 };

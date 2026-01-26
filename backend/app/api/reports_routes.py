@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.auth.jwt import get_current_user
-from app.repositories.reports import balance_by_day, cashflow_by_day, summary
+from app.repositories.reports import (
+    balance_by_day,
+    cashflow_by_day,
+    month_report,
+    summary,
+)
 
 router = APIRouter()
 
@@ -37,6 +42,22 @@ class ReportsSummary(BaseModel):
     goals_active: list[ReportsGoal]
 
 
+class MonthReportDay(BaseModel):
+    date: date
+    top_total: int
+    bottom_total: int
+    diff: int
+
+
+class MonthReport(BaseModel):
+    month: str
+    days: list[MonthReportDay]
+    month_income: int
+    month_expense: int
+    month_net: int
+    avg_net_per_day: int
+
+
 @router.get("/reports/cashflow")
 def get_reports_cashflow(
     budget_id: str,
@@ -62,3 +83,12 @@ def get_reports_summary(
     budget_id: str, current_user: dict = Depends(get_current_user)
 ) -> ReportsSummary:
     return summary(current_user["sub"], budget_id)
+
+
+@router.get("/reports/month")
+def get_reports_month(
+    budget_id: str,
+    month: str,
+    current_user: dict = Depends(get_current_user),
+) -> MonthReport:
+    return month_report(current_user["sub"], budget_id, month)
