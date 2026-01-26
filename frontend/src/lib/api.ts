@@ -189,6 +189,18 @@ export type DebtOther = {
   created_at: string;
 };
 
+export type Goal = {
+  id: string;
+  budget_id: string;
+  user_id: string;
+  title: string;
+  target_amount: number;
+  current_amount: number;
+  deadline: string | null;
+  status: "active" | "done" | "archived";
+  created_at: string;
+};
+
 const authHeaders = (token: string) => ({
   Authorization: `Bearer ${token}`,
 });
@@ -454,6 +466,97 @@ export const deleteDebtOther = async (
   id: string,
 ): Promise<{ status: string }> =>
   requestJson(`/debts/other/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+
+export const listGoals = async (
+  token: string,
+  budgetId: string,
+): Promise<Goal[]> => {
+  const query = new URLSearchParams({ budget_id: budgetId });
+  return requestJson(`/goals?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const createGoal = async (
+  token: string,
+  payload: {
+    budget_id: string;
+    title: string;
+    target_amount: number;
+    deadline?: string | null;
+  },
+): Promise<Goal> => {
+  if (!API_BASE_URL) {
+    throw buildError("API недоступен");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/goals`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw buildError("API недоступен");
+  }
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw buildError("Request failed", response.status, responseText);
+  }
+
+  return (await response.json()) as Goal;
+};
+
+export const updateGoal = async (
+  token: string,
+  id: string,
+  payload: {
+    title?: string;
+    target_amount?: number;
+    current_amount?: number;
+    deadline?: string | null;
+    status?: "active" | "done" | "archived";
+  },
+): Promise<Goal> => {
+  if (!API_BASE_URL) {
+    throw buildError("API недоступен");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/goals/${id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw buildError("API недоступен");
+  }
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw buildError("Request failed", response.status, responseText);
+  }
+
+  return (await response.json()) as Goal;
+};
+
+export const deleteGoal = async (
+  token: string,
+  id: string,
+): Promise<{ status: string }> =>
+  requestJson(`/goals/${id}`, {
     method: "DELETE",
     headers: authHeaders(token),
   });

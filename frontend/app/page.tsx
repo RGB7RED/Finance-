@@ -15,12 +15,15 @@ import {
   type Category,
   type DailyState,
   type DebtOther,
+  type Goal,
   type Transaction,
   authTelegram,
   createAccount,
   createCategory,
   createDebtOther,
+  createGoal,
   createTransaction,
+  deleteGoal,
   deleteDebtOther,
   deleteTransaction,
   ensureDefaultBudgets,
@@ -33,7 +36,9 @@ import {
   listBudgets,
   listCategories,
   listDebtsOther,
+  listGoals,
   listTransactions,
+  updateGoal,
   updateDailyState,
 } from "../src/lib/api";
 import { clearToken, getToken, setToken } from "../src/lib/auth";
@@ -82,6 +87,7 @@ export default function HomePage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [debtsOther, setDebtsOther] = useState<DebtOther[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
   const [dailyState, setDailyState] = useState<DailyState | null>(null);
   const [dailyDelta, setDailyDelta] = useState<number | null>(null);
   const [dailyStateForm, setDailyStateForm] = useState({
@@ -114,6 +120,9 @@ export default function HomePage() {
   const [debtOtherName, setDebtOtherName] = useState("");
   const [debtOtherAmount, setDebtOtherAmount] = useState("");
   const [debtOtherNote, setDebtOtherNote] = useState("");
+  const [goalTitle, setGoalTitle] = useState("");
+  const [goalTargetAmount, setGoalTargetAmount] = useState("");
+  const [goalDeadline, setGoalDeadline] = useState("");
   const [authErrorDetails, setAuthErrorDetails] =
     useState<AuthErrorDetails | null>(null);
   const [healthErrorDetails, setHealthErrorDetails] =
@@ -316,17 +325,20 @@ export default function HomePage() {
           loadedCategories,
           loadedTransactions,
           loadedDebtsOther,
+          loadedGoals,
         ] = await Promise.all([
           listAccounts(resolvedToken, nextBudgetId),
           listCategories(resolvedToken, nextBudgetId),
           listTransactions(resolvedToken, nextBudgetId, selectedDate),
           listDebtsOther(resolvedToken, nextBudgetId),
+          listGoals(resolvedToken, nextBudgetId),
         ]);
         await loadDailyStateData(resolvedToken, nextBudgetId, selectedDate);
         setAccounts(loadedAccounts);
         setCategories(loadedCategories);
         setTransactions(loadedTransactions);
         setDebtsOther(loadedDebtsOther);
+        setGoals(loadedGoals);
         setStatus("ready");
       } catch (error) {
         setStatus("error");
@@ -350,6 +362,7 @@ export default function HomePage() {
     setCategories([]);
     setTransactions([]);
     setDebtsOther([]);
+    setGoals([]);
     setDailyState(null);
     setDailyDelta(null);
     setDailyStateForm({
@@ -361,6 +374,9 @@ export default function HomePage() {
     setDebtOtherName("");
     setDebtOtherAmount("");
     setDebtOtherNote("");
+    setGoalTitle("");
+    setGoalTargetAmount("");
+    setGoalDeadline("");
   };
 
   const categoryMap = useMemo(() => {
@@ -412,6 +428,26 @@ export default function HomePage() {
     return assetsTotal - debtsTotal;
   }, [assetsTotal, debtsTotal]);
 
+  const normalizeGoalRemaining = (goal: Goal) =>
+    Math.max(0, goal.target_amount - goal.current_amount);
+
+  const getGoalStrategy = (goal: Goal) => {
+    if (!goal.deadline || goal.status !== "active") {
+      return null;
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const deadlineDate = new Date(goal.deadline);
+    const diffMs = deadlineDate.getTime() - today.getTime();
+    const daysLeft = Math.max(1, Math.ceil(diffMs / (24 * 60 * 60 * 1000)));
+    const remaining = normalizeGoalRemaining(goal);
+    const perDayRaw = remaining / daysLeft;
+    const perDay =
+      remaining > 0 ? Math.max(1, Math.round(perDayRaw)) : Math.round(perDayRaw);
+    const perWeek = Math.round((remaining * 7) / daysLeft);
+    return { daysLeft, remaining, perDay, perWeek };
+  };
+
   const topDayTotal = dailyDelta ?? 0;
   const dayDiff = topDayTotal - dailyTotal;
   const dayDiffAbs = Math.abs(dayDiff);
@@ -449,17 +485,20 @@ export default function HomePage() {
         loadedCategories,
         loadedTransactions,
         loadedDebtsOther,
+        loadedGoals,
       ] = await Promise.all([
         listAccounts(token, nextBudgetId),
         listCategories(token, nextBudgetId),
         listTransactions(token, nextBudgetId, selectedDate),
         listDebtsOther(token, nextBudgetId),
+        listGoals(token, nextBudgetId),
       ]);
       await loadDailyStateData(token, nextBudgetId, selectedDate);
       setAccounts(loadedAccounts);
       setCategories(loadedCategories);
       setTransactions(loadedTransactions);
       setDebtsOther(loadedDebtsOther);
+      setGoals(loadedGoals);
     } catch (error) {
       setMessage(
         buildErrorMessage("Не удалось загрузить счета и категории", error),
@@ -753,6 +792,85 @@ export default function HomePage() {
     }
   };
 
+  const handleCreateGoal = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    const amount = Number.parseInt(goalTargetAmount, 10);
+    if (!goalTitle.trim()) {
+      setMessage("Укажите цель");
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setMessage("Сумма цели должна быть больше нуля");
+      return;
+    }
+    setMessage("");
+    try {
+      await createGoal(token, {
+        budget_id: activeBudgetId,
+        title: goalTitle.trim(),
+        target_amount: amount,
+        deadline: goalDeadline ? goalDeadline : null,
+      });
+      setGoalTitle("");
+      setGoalTargetAmount("");
+      setGoalDeadline("");
+      const updatedGoals = await listGoals(token, activeBudgetId);
+      setGoals(updatedGoals);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось создать цель", error));
+    }
+  };
+
+  const handleGoalQuickAdd = async (goalId: string, delta: number) => {
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    const goal = goals.find((item) => item.id === goalId);
+    if (!goal) {
+      return;
+    }
+    const nextAmount = goal.current_amount + delta;
+    setMessage("");
+    try {
+      await updateGoal(token, goalId, { current_amount: nextAmount });
+      const updatedGoals = await listGoals(token, activeBudgetId);
+      setGoals(updatedGoals);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось обновить цель", error));
+    }
+  };
+
+  const handleGoalClose = async (goalId: string) => {
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    setMessage("");
+    try {
+      await updateGoal(token, goalId, { status: "done" });
+      const updatedGoals = await listGoals(token, activeBudgetId);
+      setGoals(updatedGoals);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось закрыть цель", error));
+    }
+  };
+
+  const handleDeleteGoal = async (goalId: string) => {
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    setMessage("");
+    try {
+      await deleteGoal(token, goalId);
+      const updatedGoals = await listGoals(token, activeBudgetId);
+      setGoals(updatedGoals);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось удалить цель", error));
+    }
+  };
+
   const handleDailyStateChange = (
     field: keyof typeof dailyStateForm,
     value: string,
@@ -1028,6 +1146,109 @@ export default function HomePage() {
                 </p>
               </div>
             )}
+          </section>
+
+          <section>
+            <h2>Цели</h2>
+            {goals.length ? (
+              <ul>
+                {goals.map((goal) => {
+                  const remaining = normalizeGoalRemaining(goal);
+                  const strategy = getGoalStrategy(goal);
+                  const isActive = goal.status === "active";
+                  return (
+                    <li key={goal.id}>
+                      <div>
+                        <strong>{goal.title}</strong>
+                        <p>
+                          Прогресс: {goal.current_amount} /{" "}
+                          {goal.target_amount} ₽
+                        </p>
+                        <p>Осталось: {remaining} ₽</p>
+                        {goal.deadline && <p>Дедлайн: {goal.deadline}</p>}
+                        <p>Статус: {goal.status}</p>
+                        {strategy && (
+                          <div>
+                            <p>Нужно откладывать {strategy.perDay} ₽/день</p>
+                            <p>
+                              Нужно откладывать {strategy.perWeek} ₽/неделю
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => handleGoalQuickAdd(goal.id, 100)}
+                          disabled={!isActive}
+                        >
+                          +100
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleGoalQuickAdd(goal.id, 500)}
+                          disabled={!isActive}
+                        >
+                          +500
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleGoalQuickAdd(goal.id, 1000)}
+                          disabled={!isActive}
+                        >
+                          +1000
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleGoalClose(goal.id)}
+                          disabled={!isActive}
+                        >
+                          Закрыть
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteGoal(goal.id)}
+                        >
+                          Удалить
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p>Нет целей</p>
+            )}
+            <form onSubmit={handleCreateGoal}>
+              <label>
+                Цель:
+                <input
+                  type="text"
+                  value={goalTitle}
+                  onChange={(event) => setGoalTitle(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Сумма:
+                <input
+                  type="number"
+                  min="1"
+                  value={goalTargetAmount}
+                  onChange={(event) => setGoalTargetAmount(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Дедлайн:
+                <input
+                  type="date"
+                  value={goalDeadline}
+                  onChange={(event) => setGoalDeadline(event.target.value)}
+                />
+              </label>
+              <button type="submit">Создать цель</button>
+            </form>
           </section>
 
           <section>
