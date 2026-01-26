@@ -9,9 +9,18 @@ from app.auth.jwt import create_access_token, get_current_user
 from app.auth.telegram import verify_init_data
 from app.core.config import get_telegram_bot_token, settings
 from app.repositories.accounts import create_account, list_accounts
-from app.repositories.budgets import ensure_default_budgets, list_budgets
+from app.repositories.budgets import (
+    ensure_default_budgets,
+    list_budgets,
+    reset_budget_data,
+)
 from app.repositories.categories import create_category, list_categories
-from app.repositories.daily_state import get_delta, get_state_or_default, upsert
+from app.repositories.daily_state import (
+    get_delta,
+    get_state_as_of,
+    get_state_or_default,
+    upsert_with_base,
+)
 from app.repositories.debts_other import (
     delete_debt_other,
     list_debts_other,
@@ -167,6 +176,14 @@ def post_budgets_defaults(
     return ensure_default_budgets(current_user["sub"])
 
 
+@router.post("/budgets/{budget_id}/reset")
+def post_budgets_reset(
+    budget_id: str, current_user: dict = Depends(get_current_user)
+) -> dict[str, str]:
+    reset_budget_data(current_user["sub"], budget_id)
+    return {"status": "ok"}
+
+
 @router.get("/accounts")
 def get_accounts(
     budget_id: str, current_user: dict = Depends(get_current_user)
@@ -235,7 +252,7 @@ def post_debts_other(
     payload: DebtOtherCreateRequest, current_user: dict = Depends(get_current_user)
 ) -> DailyStateOut:
     target_date = payload.date or _utc_today()
-    current_state = get_state_or_default(
+    current_state = get_state_as_of(
         current_user["sub"], payload.budget_id, target_date
     )
     cash_total = int(current_state.get("cash_total", 0))
@@ -271,7 +288,7 @@ def post_debts_other(
                     detail="Недостаточно средств на безнале для возврата долга",
                 )
 
-    updated = upsert(
+    updated = upsert_with_base(
         current_user["sub"],
         payload.budget_id,
         target_date,
@@ -309,7 +326,7 @@ def put_daily_state(
     fields = payload.model_dump(
         mode="json", exclude={"budget_id", "date"}, exclude_none=True
     )
-    record = upsert(
+    record = upsert_with_base(
         current_user["sub"],
         payload.budget_id,
         payload.date,

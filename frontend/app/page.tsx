@@ -41,6 +41,7 @@ import {
   listCategories,
   listGoals,
   listTransactions,
+  resetBudget,
   updateGoal,
   updateDailyState,
 } from "../src/lib/api";
@@ -193,6 +194,31 @@ export default function HomePage() {
     ]);
     setDailyStateFromData(state);
     setDailyDelta(delta.top_day_total);
+  };
+
+  const loadReports = async () => {
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    if (!reportFrom || !reportTo) {
+      return;
+    }
+    if (reportFrom > reportTo) {
+      setMessage("Некорректный период отчета");
+      return;
+    }
+    try {
+      const [cashflow, balance, summary] = await Promise.all([
+        getReportCashflow(token, activeBudgetId, reportFrom, reportTo),
+        getReportBalance(token, activeBudgetId, reportFrom, reportTo),
+        getReportSummary(token, activeBudgetId),
+      ]);
+      setReportCashflow(cashflow);
+      setReportBalance(balance);
+      setReportSummary(summary);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось загрузить отчеты", error));
+    }
   };
 
   useEffect(() => {
@@ -555,31 +581,6 @@ export default function HomePage() {
   }, [token, activeBudgetId, selectedDate]);
 
   useEffect(() => {
-    const loadReports = async () => {
-      if (!token || !activeBudgetId) {
-        return;
-      }
-      if (!reportFrom || !reportTo) {
-        return;
-      }
-      if (reportFrom > reportTo) {
-        setMessage("Некорректный период отчета");
-        return;
-      }
-      try {
-        const [cashflow, balance, summary] = await Promise.all([
-          getReportCashflow(token, activeBudgetId, reportFrom, reportTo),
-          getReportBalance(token, activeBudgetId, reportFrom, reportTo),
-          getReportSummary(token, activeBudgetId),
-        ]);
-        setReportCashflow(cashflow);
-        setReportBalance(balance);
-        setReportSummary(summary);
-      } catch (error) {
-        setMessage(buildErrorMessage("Не удалось загрузить отчеты", error));
-      }
-    };
-
     void loadReports();
   }, [token, activeBudgetId, reportFrom, reportTo]);
 
@@ -965,20 +966,50 @@ export default function HomePage() {
     }
     setMessage("");
     try {
-      const updated = await updateDailyState(token, {
+      await updateDailyState(token, {
         budget_id: activeBudgetId,
         date: selectedDate,
         [field]: nextValue,
       });
-      setDailyStateFromData(updated);
-      const updatedDelta = await getDailyDelta(
-        token,
-        activeBudgetId,
-        selectedDate,
-      );
-      setDailyDelta(updatedDelta.top_day_total);
+      await loadDailyStateData(token, activeBudgetId, selectedDate);
+      await loadReports();
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось обновить состояние дня", error));
+    }
+  };
+
+  const handleResetBudget = async () => {
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    const confirmed = window.confirm(
+      "Обнулить все данные текущего бюджета?",
+    );
+    if (!confirmed) {
+      return;
+    }
+    setMessage("");
+    try {
+      await resetBudget(token, activeBudgetId);
+      const [
+        loadedAccounts,
+        loadedCategories,
+        loadedTransactions,
+        loadedGoals,
+      ] = await Promise.all([
+        listAccounts(token, activeBudgetId),
+        listCategories(token, activeBudgetId),
+        listTransactions(token, activeBudgetId, selectedDate),
+        listGoals(token, activeBudgetId),
+      ]);
+      await loadDailyStateData(token, activeBudgetId, selectedDate);
+      setAccounts(loadedAccounts);
+      setCategories(loadedCategories);
+      setTransactions(loadedTransactions);
+      setGoals(loadedGoals);
+      await loadReports();
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось обнулить бюджет", error));
     }
   };
 
@@ -1796,6 +1827,9 @@ export default function HomePage() {
           </section>
 
           <section>
+            <button type="button" onClick={handleResetBudget}>
+              Обнулить всё
+            </button>
             <button type="button" onClick={handleLogout}>
               Logout
             </button>

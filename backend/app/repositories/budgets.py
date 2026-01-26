@@ -2,7 +2,25 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastapi import HTTPException, status
+
 from app.integrations.supabase_client import get_supabase_client
+
+
+def _ensure_budget_access(user_id: str, budget_id: str) -> None:
+    client = get_supabase_client()
+    response = (
+        client.table("budgets")
+        .select("id")
+        .eq("id", budget_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Budget not found for user",
+        )
 
 
 def list_budgets(user_id: str) -> list[dict[str, Any]]:
@@ -36,3 +54,18 @@ def ensure_default_budgets(user_id: str) -> list[dict[str, Any]]:
         client.table("budgets").insert(payload).execute()
 
     return list_budgets(user_id)
+
+
+def reset_budget_data(user_id: str, budget_id: str) -> None:
+    _ensure_budget_access(user_id, budget_id)
+    client = get_supabase_client()
+    tables = [
+        "transactions",
+        "goals",
+        "debts_other",
+        "daily_state",
+        "accounts",
+        "categories",
+    ]
+    for table in tables:
+        client.table(table).delete().eq("budget_id", budget_id).execute()

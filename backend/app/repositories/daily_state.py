@@ -103,6 +103,43 @@ def get_state_or_default(
     return {**record, **_calculate_totals(record)}
 
 
+def _totals_from_record(record: dict[str, Any]) -> dict[str, int]:
+    return {
+        "cash_total": int(record.get("cash_total", 0)),
+        "bank_total": int(record.get("bank_total", 0)),
+        "debt_cards_total": int(record.get("debt_cards_total", 0)),
+        "debt_other_total": int(record.get("debt_other_total", 0)),
+    }
+
+
+def get_state_as_of(
+    user_id: str, budget_id: str, target_date: date
+) -> dict[str, int]:
+    record = get_state(user_id, budget_id, target_date)
+    if record is not None:
+        return _totals_from_record(record)
+    _ensure_budget_access(user_id, budget_id)
+    client = get_supabase_client()
+    response = (
+        client.table("daily_state")
+        .select("cash_total, bank_total, debt_cards_total, debt_other_total")
+        .eq("budget_id", budget_id)
+        .lt("date", target_date.isoformat())
+        .order("date", desc=True)
+        .limit(1)
+        .execute()
+    )
+    data = response.data or []
+    if data:
+        return _totals_from_record(data[0])
+    return {
+        "cash_total": 0,
+        "bank_total": 0,
+        "debt_cards_total": 0,
+        "debt_other_total": 0,
+    }
+
+
 def upsert(
     user_id: str,
     budget_id: str,
@@ -118,6 +155,36 @@ def upsert(
         "debt_other_total": int((existing or {}).get("debt_other_total", 0)),
     }
     merged = {**base, **fields}
+    payload = {
+        "budget_id": budget_id,
+        "user_id": user_id,
+        "date": target_date.isoformat(),
+        **merged,
+    }
+    client = get_supabase_client()
+    try:
+        response = (
+            client.table("daily_state")
+            .upsert(payload, on_conflict="budget_id,date")
+            .execute()
+        )
+    except APIError as exc:
+        _raise_postgrest_http_error(exc)
+    data = response.data or []
+    if not data:
+        raise RuntimeError("Failed to update daily state")
+    record = data[0]
+    return {**record, **_calculate_totals(record)}
+
+
+def upsert_with_base(
+    user_id: str,
+    budget_id: str,
+    target_date: date,
+    fields: dict[str, int],
+) -> dict[str, Any]:
+    base = get_state_as_of(user_id, budget_id, target_date)
+    merged = {**base, **{key: int(value) for key, value in fields.items()}}
     payload = {
         "budget_id": budget_id,
         "user_id": user_id,
