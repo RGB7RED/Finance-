@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from postgrest.exceptions import APIError
 
 from app.api.goals_routes import router as goals_router
+from app.api.reconcile_routes import router as reconcile_router
 from app.api.reports_routes import router as reports_router
 from app.api.routes import router
 from app.core.config import (
@@ -95,6 +96,7 @@ def options_handler(path: str) -> Response:
 app.include_router(router)
 app.include_router(goals_router)
 app.include_router(reports_router)
+app.include_router(reconcile_router)
 
 
 @app.get("/health")

@@ -18,6 +18,7 @@ import {
   type Category,
   type DailyState,
   type Goal,
+  type ReconcileSummary,
   type ReportsSummary,
   type Transaction,
   authTelegram,
@@ -29,10 +30,10 @@ import {
   deleteGoal,
   deleteTransaction,
   ensureDefaultBudgets,
-  getDailyDelta,
   getDailyState,
   getApiBaseUrl,
   getMe,
+  getReconcile,
   getReportBalance,
   getReportCashflow,
   getReportSummary,
@@ -103,7 +104,8 @@ export default function HomePage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [dailyState, setDailyState] = useState<DailyState | null>(null);
-  const [dailyDelta, setDailyDelta] = useState<number | null>(null);
+  const [reconcileSummary, setReconcileSummary] =
+    useState<ReconcileSummary | null>(null);
   const [dailyStateForm, setDailyStateForm] = useState({
     cash_total: "",
     bank_total: "",
@@ -194,12 +196,12 @@ export default function HomePage() {
     budgetId: string,
     dateValue: string,
   ) => {
-    const [state, delta] = await Promise.all([
+    const [state, reconcile] = await Promise.all([
       getDailyState(authToken, budgetId, dateValue),
-      getDailyDelta(authToken, budgetId, dateValue),
+      getReconcile(authToken, budgetId, dateValue),
     ]);
     setDailyStateFromData(state);
-    setDailyDelta(delta.top_day_total);
+    setReconcileSummary(reconcile);
   };
 
   const loadReports = async () => {
@@ -419,7 +421,7 @@ export default function HomePage() {
     setTransactions([]);
     setGoals([]);
     setDailyState(null);
-    setDailyDelta(null);
+    setReconcileSummary(null);
     setReportCashflow([]);
     setReportBalance([]);
     setReportSummary(null);
@@ -510,10 +512,11 @@ export default function HomePage() {
     return { daysLeft, remaining, perDay, perWeek };
   };
 
-  const topDayTotal = dailyDelta ?? 0;
-  const dayDiff = topDayTotal - dailyTotal;
-  const dayDiffAbs = Math.abs(dayDiff);
-  const isReconciled = dayDiffAbs <= 1;
+  const topDayTotal = reconcileSummary?.top_total ?? 0;
+  const bottomDayTotal = reconcileSummary?.bottom_total ?? dailyTotal;
+  const reconcileDiff = reconcileSummary?.diff ?? 0;
+  const reconcileDiffAbs = Math.abs(reconcileDiff);
+  const isReconciled = reconcileSummary?.is_ok ?? true;
 
   const renderCategoryTree = (parentId: string | null) => {
     const key = parentId ?? "root";
@@ -950,8 +953,8 @@ export default function HomePage() {
       };
       const updated = await updateDailyState(token, payload);
       setDailyStateFromData(updated);
-      const delta = await getDailyDelta(token, activeBudgetId, selectedDate);
-      setDailyDelta(delta.top_day_total);
+      await loadDailyStateData(token, activeBudgetId, selectedDate);
+      await loadReports();
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось сохранить состояние дня", error));
     }
@@ -1553,7 +1556,7 @@ export default function HomePage() {
             ) : (
               <p>Нет операций</p>
             )}
-            <p>Итог за день (нижний): {dailyTotal} ₽</p>
+            <p>Итог за день (нижний): {bottomDayTotal} ₽</p>
           </section>
 
           <section>
@@ -1567,53 +1570,81 @@ export default function HomePage() {
             <p style={{ fontSize: "12px", opacity: 0.7 }}>
               lastQuickAdjustClick: {lastQuickAdjustClick || "—"}
             </p>
+            <p>
+              Верхний итог: {topDayTotal} ₽, Нижний итог: {bottomDayTotal} ₽,
+              Разница: {reconcileDiff} ₽
+            </p>
             {isReconciled ? (
               <p>Сверка: OK</p>
             ) : (
               <>
-                <p>Сверка: расхождение {dayDiffAbs} ₽</p>
+                <p>Сверка: расхождение {reconcileDiffAbs} ₽</p>
                 <p>
-                  {dayDiff < 0
-                    ? "Не учтены изменения остатков (наличка/безнал)"
-                    : "Не учтены расходы/переводы в операциях"}
+                  {reconcileDiff > 1
+                    ? "Остатки больше, чем операции. Нужна корректировка."
+                    : "Остатки меньше, чем операции. Нужна корректировка."}
                 </p>
                 <div>
-                  <button
-                    type="button"
-                    onClick={(event) =>
-                      handleQuickAdjust(event, "cash_total", -dayDiffAbs)
-                    }
-                    disabled={isQuickAdjusting}
-                  >
-                    Уменьшить наличку на {dayDiffAbs} ₽
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) =>
-                      handleQuickAdjust(event, "bank_total", -dayDiffAbs)
-                    }
-                    disabled={isQuickAdjusting}
-                  >
-                    Уменьшить безнал на {dayDiffAbs} ₽
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) =>
-                      handleQuickAdjust(event, "cash_total", dayDiffAbs)
-                    }
-                    disabled={isQuickAdjusting}
-                  >
-                    Увеличить наличку на {dayDiffAbs} ₽
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) =>
-                      handleQuickAdjust(event, "bank_total", dayDiffAbs)
-                    }
-                    disabled={isQuickAdjusting}
-                  >
-                    Увеличить безнал на {dayDiffAbs} ₽
-                  </button>
+                  {reconcileDiff > 1 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={(event) =>
+                          handleQuickAdjust(
+                            event,
+                            "cash_total",
+                            -reconcileDiffAbs,
+                          )
+                        }
+                        disabled={isQuickAdjusting}
+                      >
+                        Уменьшить наличку на {reconcileDiffAbs} ₽
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) =>
+                          handleQuickAdjust(
+                            event,
+                            "bank_total",
+                            -reconcileDiffAbs,
+                          )
+                        }
+                        disabled={isQuickAdjusting}
+                      >
+                        Уменьшить безнал на {reconcileDiffAbs} ₽
+                      </button>
+                    </>
+                  )}
+                  {reconcileDiff < -1 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={(event) =>
+                          handleQuickAdjust(
+                            event,
+                            "cash_total",
+                            reconcileDiffAbs,
+                          )
+                        }
+                        disabled={isQuickAdjusting}
+                      >
+                        Увеличить наличку на {reconcileDiffAbs} ₽
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) =>
+                          handleQuickAdjust(
+                            event,
+                            "bank_total",
+                            reconcileDiffAbs,
+                          )
+                        }
+                        disabled={isQuickAdjusting}
+                      >
+                        Увеличить безнал на {reconcileDiffAbs} ₽
+                      </button>
+                    </>
+                  )}
                 </div>
                 {quickAdjustErrorDetails && (
                   <div>
