@@ -110,11 +110,19 @@ def upsert(
     fields: dict[str, int],
 ) -> dict[str, Any]:
     _ensure_budget_access(user_id, budget_id)
+    existing = get_state(user_id, budget_id, target_date)
+    base = {
+        "cash_total": int((existing or {}).get("cash_total", 0)),
+        "bank_total": int((existing or {}).get("bank_total", 0)),
+        "debt_cards_total": int((existing or {}).get("debt_cards_total", 0)),
+        "debt_other_total": int((existing or {}).get("debt_other_total", 0)),
+    }
+    merged = {**base, **fields}
     payload = {
         "budget_id": budget_id,
         "user_id": user_id,
         "date": target_date.isoformat(),
-        **fields,
+        **merged,
     }
     client = get_supabase_client()
     try:

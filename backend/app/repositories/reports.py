@@ -7,7 +7,6 @@ from fastapi import HTTPException, status
 
 from app.integrations.supabase_client import get_supabase_client
 from app.repositories.daily_state import get_state_or_default
-from app.repositories.debts_other import sum_debts_other_as_of
 
 
 def _ensure_budget_access(user_id: str, budget_id: str) -> None:
@@ -150,7 +149,6 @@ def balance_by_day(
 def summary(user_id: str, budget_id: str) -> dict[str, Any]:
     today = datetime.now(timezone.utc).date()
     daily_state = get_state_or_default(user_id, budget_id, today)
-    debt_other_total = sum_debts_other_as_of(user_id, budget_id, today)
     client = get_supabase_client()
     response = (
         client.table("goals")
@@ -172,6 +170,6 @@ def summary(user_id: str, budget_id: str) -> dict[str, Any]:
     ]
     return {
         "debt_cards_total": int(daily_state.get("debt_cards_total", 0)),
-        "debt_other_total": debt_other_total,
+        "debt_other_total": int(daily_state.get("debt_other_total", 0)),
         "goals_active": goals_active,
     }
