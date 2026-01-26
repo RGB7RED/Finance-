@@ -81,3 +81,16 @@ create table if not exists public.daily_state (
     updated_at timestamptz not null default now(),
     unique (budget_id, date)
 );
+
+create table if not exists public.debts_other (
+    id uuid primary key default gen_random_uuid(),
+    budget_id uuid not null references public.budgets(id) on delete cascade,
+    user_id uuid not null references public.users(id) on delete cascade,
+    name text not null,
+    amount integer not null check (amount >= 0),
+    note text null,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists debts_other_budget_user_idx
+    on public.debts_other (budget_id, user_id);

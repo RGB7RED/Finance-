@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 from postgrest.exceptions import APIError
 
 from app.integrations.supabase_client import get_supabase_client
+from app.repositories.debts_other import sum_debts_other
 
 
 def _ensure_budget_access(user_id: str, budget_id: str) -> None:
@@ -60,6 +61,7 @@ def get_or_create(
     user_id: str, budget_id: str, target_date: date
 ) -> dict[str, Any]:
     _ensure_budget_access(user_id, budget_id)
+    debt_other_total = sum_debts_other(user_id, budget_id)
     client = get_supabase_client()
     query = (
         client.table("daily_state")
@@ -82,7 +84,28 @@ def get_or_create(
         else:
             _raise_postgrest_http_error(exc)
     if response and response.data:
-        return {**response.data, **_calculate_totals(response.data)}
+        record = response.data
+        try:
+            updated = (
+                client.table("daily_state")
+                .upsert(
+                    {
+                        "budget_id": budget_id,
+                        "user_id": user_id,
+                        "date": target_date.isoformat(),
+                        "debt_other_total": debt_other_total,
+                    },
+                    on_conflict="budget_id,date",
+                )
+                .execute()
+            )
+        except APIError as exc:
+            _raise_postgrest_http_error(exc)
+        data = updated.data or []
+        if data:
+            record = data[0]
+        record = {**record, "debt_other_total": debt_other_total}
+        return {**record, **_calculate_totals(record)}
 
     insert_payload = {
         "budget_id": budget_id,
@@ -91,7 +114,7 @@ def get_or_create(
         "cash_total": 0,
         "bank_total": 0,
         "debt_cards_total": 0,
-        "debt_other_total": 0,
+        "debt_other_total": debt_other_total,
     }
     try:
         inserted = (
