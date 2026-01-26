@@ -230,6 +230,16 @@ export const ensureDefaultBudgets = async (token: string): Promise<void> => {
   });
 };
 
+export const resetBudget = async (
+  token: string,
+  budgetId: string,
+): Promise<void> => {
+  await requestJson(`/budgets/${budgetId}/reset`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+};
+
 export const listBudgets = async (token: string): Promise<Budget[]> =>
   requestJson("/budgets", {
     headers: authHeaders(token),
