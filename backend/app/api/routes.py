@@ -3,7 +3,7 @@ import logging
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 from app.auth.jwt import create_access_token, get_current_user
 from app.auth.telegram import verify_init_data
@@ -103,7 +103,7 @@ class DailyStateAccount(BaseModel):
 
 class DailyStateAccountUpdate(BaseModel):
     account_id: str
-    amount: int = Field(ge=0)
+    amount: StrictInt = Field(ge=0)
 
 
 class DailyStateDebts(BaseModel):
@@ -460,24 +460,68 @@ def get_daily_state(
 def put_daily_state(
     payload: DailyStateUpdate, current_user: dict = Depends(get_current_user)
 ) -> DailyStateOut:
+    user_id = current_user["sub"]
+    logger.info(
+        "daily_state_update request user_id=%s budget_id=%s date=%s",
+        user_id,
+        payload.budget_id,
+        payload.date,
+    )
+    if not payload.accounts:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Список счетов не должен быть пустым",
+        )
+    account_ids = [item.account_id for item in payload.accounts]
+    logger.info(
+        "daily_state_update accounts_count=%s account_ids=%s",
+        len(account_ids),
+        account_ids,
+    )
+    allowed_accounts = list_accounts(user_id, payload.budget_id)
+    allowed_account_ids = {account["id"] for account in allowed_accounts}
+    invalid_accounts = [
+        account_id
+        for account_id in account_ids
+        if account_id not in allowed_account_ids
+    ]
+    if invalid_accounts:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Счет(а) не принадлежат пользователю или бюджету: "
+                + ", ".join(invalid_accounts)
+            ),
+        )
     balances = [
         {"account_id": item.account_id, "amount": item.amount}
         for item in payload.accounts
     ]
-    upsert_balances(
-        current_user["sub"], payload.budget_id, payload.date, balances
-    )
-    if payload.debts is not None:
-        upsert_debts(
-            current_user["sub"],
-            payload.budget_id,
-            payload.date,
-            credit_cards=payload.debts.credit_cards,
-            people_debts=payload.debts.people_debts,
+    try:
+        result = upsert_balances(
+            user_id, payload.budget_id, payload.date, balances
         )
-    return _build_daily_state_response(
-        current_user["sub"], payload.budget_id, payload.date
-    )
+        logger.info(
+            "daily_state_update balances_updated=%s",
+            len(result),
+        )
+        if payload.debts is not None:
+            upsert_debts(
+                user_id,
+                payload.budget_id,
+                payload.date,
+                credit_cards=payload.debts.credit_cards,
+                people_debts=payload.debts.people_debts,
+            )
+        logger.info("daily_state_update success")
+    except HTTPException as exc:
+        logger.error(
+            "daily_state_update error status=%s detail=%s",
+            exc.status_code,
+            exc.detail,
+        )
+        raise
+    return _build_daily_state_response(user_id, payload.budget_id, payload.date)
 
 
 @router.get("/daily-state/delta")
