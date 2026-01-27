@@ -7,9 +7,9 @@ from fastapi import HTTPException, status
 from postgrest.exceptions import APIError
 
 from app.integrations.supabase_client import get_supabase_client
-from app.repositories.daily_account_balances import (
+from app.repositories.account_balance_events import (
     get_balances_as_of,
-    has_balances_as_of,
+    has_balance_events_as_of,
 )
 
 
@@ -469,7 +469,7 @@ def get_balance_for_date(
     if has_accounts:
         has_data = True
     else:
-        has_data = has_balances_as_of(
+        has_data = has_balance_events_as_of(
             user_id, budget_id, target_date
         ) or has_state_as_of(user_id, budget_id, target_date)
     return balance, has_data

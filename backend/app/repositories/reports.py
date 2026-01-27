@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 
 from app.integrations.supabase_client import get_supabase_client
 from app.repositories.accounts import list_accounts
+from app.repositories.account_balance_events import list_balance_events
 from app.repositories.daily_state import (
     get_balance_for_date,
     get_state_or_default,
@@ -108,31 +109,45 @@ def balance_by_day(
     account_kind = {
         account["id"]: account.get("kind") for account in accounts
     }
-    balances_response = (
-        client.table("daily_account_balances")
-        .select("date, account_id, amount")
-        .eq("budget_id", budget_id)
-        .eq("user_id", user_id)
-        .lte("date", date_to.isoformat())
-        .order("date")
-        .execute()
+    raw_events = list_balance_events(
+        user_id, budget_id, date_to=date_to
     )
-    balances_records = balances_response.data or []
+    balance_events: list[tuple[date, str, int]] = []
+    for item in raw_events:
+        event_date = item.get("date")
+        account_id = item.get("account_id")
+        if not event_date or not account_id:
+            continue
+        balance_events.append(
+            (
+                date.fromisoformat(event_date),
+                account_id,
+                int(item.get("delta", 0)),
+            )
+        )
+    balance_events.sort(key=lambda item: item[0])
     last_balances = {account["id"]: 0 for account in accounts}
     balance_index = 0
+    while (
+        balance_index < len(balance_events)
+        and balance_events[balance_index][0] < date_from
+    ):
+        event_date, account_id, delta = balance_events[balance_index]
+        if account_id in last_balances:
+            last_balances[account_id] += delta
+        balance_index += 1
     last_state: dict[str, int] | None = None
     last_balance = 0
     result = []
     for day in _date_range(date_from, date_to):
         key = day.isoformat()
-        while balance_index < len(balances_records):
-            record = balances_records[balance_index]
-            record_date = record.get("date")
-            if not record_date or record_date > key:
-                break
-            account_id = record.get("account_id")
+        while (
+            balance_index < len(balance_events)
+            and balance_events[balance_index][0] == day
+        ):
+            _, account_id, delta = balance_events[balance_index]
             if account_id in last_balances:
-                last_balances[account_id] = int(record.get("amount", 0))
+                last_balances[account_id] += delta
             balance_index += 1
         record = debts_records.get(key)
         if record:
@@ -274,18 +289,13 @@ def month_report(user_id: str, budget_id: str, month: str) -> dict[str, Any]:
     )
 
     start_day = date_from - timedelta(days=1)
+    end_day = date_to - timedelta(days=1)
     accounts = list_accounts(user_id, budget_id)
     account_kind = {
         account["id"]: account.get("kind") for account in accounts
     }
-    balance_response = (
-        client.table("daily_account_balances")
-        .select("date, account_id, amount")
-        .eq("budget_id", budget_id)
-        .eq("user_id", user_id)
-        .gte("date", start_day.isoformat())
-        .lt("date", date_to.isoformat())
-        .execute()
+    raw_events = list_balance_events(
+        user_id, budget_id, date_to=end_day
     )
     debts_response = (
         client.table("daily_state")
@@ -297,7 +307,6 @@ def month_report(user_id: str, budget_id: str, month: str) -> dict[str, Any]:
         .execute()
     )
 
-    end_day = date_to - timedelta(days=1)
     days = _date_range(date_from, end_day)
     cashflow_totals = {
         day.isoformat(): {"income_total": 0, "expense_total": 0}
@@ -314,21 +323,50 @@ def month_report(user_id: str, budget_id: str, month: str) -> dict[str, Any]:
         elif tx_type == "expense":
             cashflow_totals[tx_date]["expense_total"] += amount
 
-    balance_records: dict[str, dict[str, int]] = {}
-    for item in balance_response.data or []:
-        record_date = item.get("date")
+    balance_events: list[tuple[date, str, int]] = []
+    for item in raw_events:
+        event_date = item.get("date")
         account_id = item.get("account_id")
-        if not record_date:
+        if not event_date or not account_id:
             continue
-        entry = balance_records.setdefault(
-            record_date, {"cash_total": 0, "noncash_total": 0}
+        balance_events.append(
+            (
+                date.fromisoformat(event_date),
+                account_id,
+                int(item.get("delta", 0)),
+            )
         )
-        kind = account_kind.get(account_id)
-        amount = int(item.get("amount", 0))
-        if kind == "cash":
-            entry["cash_total"] += amount
-        else:
-            entry["noncash_total"] += amount
+    balance_events.sort(key=lambda item: item[0])
+    balances: dict[str, int] = {account["id"]: 0 for account in accounts}
+    balance_index = 0
+    while (
+        balance_index < len(balance_events)
+        and balance_events[balance_index][0] < start_day
+    ):
+        _, account_id, delta = balance_events[balance_index]
+        if account_id in balances:
+            balances[account_id] += delta
+        balance_index += 1
+
+    balance_records: dict[str, dict[str, int]] = {}
+    for day in _date_range(start_day, end_day):
+        while (
+            balance_index < len(balance_events)
+            and balance_events[balance_index][0] == day
+        ):
+            _, account_id, delta = balance_events[balance_index]
+            if account_id in balances:
+                balances[account_id] += delta
+            balance_index += 1
+        entry = balance_records.setdefault(
+            day.isoformat(), {"cash_total": 0, "noncash_total": 0}
+        )
+        for account_id, amount in balances.items():
+            kind = account_kind.get(account_id)
+            if kind == "cash":
+                entry["cash_total"] += amount
+            else:
+                entry["noncash_total"] += amount
     debt_records = {
         item.get("date"): item for item in debts_response.data or []
     }
