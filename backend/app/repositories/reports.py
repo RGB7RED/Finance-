@@ -113,30 +113,27 @@ def balance_by_day(
         .select("date, account_id, amount")
         .eq("budget_id", budget_id)
         .eq("user_id", user_id)
-        .gte("date", date_from.isoformat())
         .lte("date", date_to.isoformat())
+        .order("date")
         .execute()
     )
-    totals_by_date: dict[str, dict[str, int]] = {
-        day.isoformat(): {"cash_total": 0, "noncash_total": 0}
-        for day in _date_range(date_from, date_to)
-    }
-    for item in balances_response.data or []:
-        tx_date = item.get("date")
-        account_id = item.get("account_id")
-        if not tx_date or tx_date not in totals_by_date:
-            continue
-        kind = account_kind.get(account_id)
-        amount = int(item.get("amount", 0))
-        if kind == "cash":
-            totals_by_date[tx_date]["cash_total"] += amount
-        else:
-            totals_by_date[tx_date]["noncash_total"] += amount
-    result = []
+    balances_records = balances_response.data or []
+    last_balances = {account["id"]: 0 for account in accounts}
+    balance_index = 0
     last_state: dict[str, int] | None = None
     last_balance = 0
+    result = []
     for day in _date_range(date_from, date_to):
         key = day.isoformat()
+        while balance_index < len(balances_records):
+            record = balances_records[balance_index]
+            record_date = record.get("date")
+            if not record_date or record_date > key:
+                break
+            account_id = record.get("account_id")
+            if account_id in last_balances:
+                last_balances[account_id] = int(record.get("amount", 0))
+            balance_index += 1
         record = debts_records.get(key)
         if record:
             debt_cards_total = int(record.get("debt_cards_total", 0))
@@ -151,8 +148,13 @@ def balance_by_day(
         else:
             debt_cards_total = 0
             debt_other_total = 0
-        cash_total = totals_by_date[key]["cash_total"]
-        noncash_total = totals_by_date[key]["noncash_total"]
+        cash_total = 0
+        noncash_total = 0
+        for account_id, amount in last_balances.items():
+            if account_kind.get(account_id) == "cash":
+                cash_total += amount
+            else:
+                noncash_total += amount
         assets_total = cash_total + noncash_total
         debts_total = debt_cards_total + debt_other_total
         balance = assets_total - debts_total

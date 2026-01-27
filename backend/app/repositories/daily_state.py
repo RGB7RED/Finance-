@@ -7,7 +7,10 @@ from fastapi import HTTPException, status
 from postgrest.exceptions import APIError
 
 from app.integrations.supabase_client import get_supabase_client
-from app.repositories.daily_account_balances import totals_for_date
+from app.repositories.daily_account_balances import (
+    get_balances_as_of,
+    has_balances_as_of,
+)
 
 
 def _ensure_budget_access(user_id: str, budget_id: str) -> None:
@@ -114,6 +117,48 @@ def get_debts(
         "debt_cards_total": int(record.get("debt_cards_total", 0)),
         "debt_other_total": int(record.get("debt_other_total", 0)),
     }
+
+
+def get_debts_as_of(
+    user_id: str, budget_id: str, target_date: date
+) -> dict[str, int]:
+    _ensure_budget_access(user_id, budget_id)
+    client = get_supabase_client()
+    response = (
+        client.table("daily_state")
+        .select("debt_cards_total, debt_other_total, date")
+        .eq("budget_id", budget_id)
+        .eq("user_id", user_id)
+        .lte("date", target_date.isoformat())
+        .order("date", desc=True)
+        .limit(1)
+        .execute()
+    )
+    data = response.data or []
+    if not data:
+        return {"debt_cards_total": 0, "debt_other_total": 0}
+    record = data[0]
+    return {
+        "debt_cards_total": int(record.get("debt_cards_total", 0)),
+        "debt_other_total": int(record.get("debt_other_total", 0)),
+    }
+
+
+def has_state_as_of(
+    user_id: str, budget_id: str, target_date: date
+) -> bool:
+    _ensure_budget_access(user_id, budget_id)
+    client = get_supabase_client()
+    response = (
+        client.table("daily_state")
+        .select("id")
+        .eq("budget_id", budget_id)
+        .eq("user_id", user_id)
+        .lte("date", target_date.isoformat())
+        .limit(1)
+        .execute()
+    )
+    return bool(response.data)
 
 
 def upsert_debts(
@@ -413,13 +458,20 @@ def get_balance(user_id: str, budget_id: str, target_date: date) -> int:
 def get_balance_for_date(
     user_id: str, budget_id: str, target_date: date
 ) -> tuple[int, bool]:
-    totals, has_assets = totals_for_date(user_id, budget_id, target_date)
-    debts = get_debts(user_id, budget_id, target_date)
+    balances = get_balances_as_of(user_id, budget_id, target_date)
+    assets_total = sum(balances.values())
+    debts = get_debts_as_of(user_id, budget_id, target_date)
     debts_total = int(debts.get("debt_cards_total", 0)) + int(
         debts.get("debt_other_total", 0)
     )
-    balance = totals["assets_total"] - debts_total
-    has_data = has_assets or debts_total != 0
+    balance = assets_total - debts_total
+    has_accounts = bool(balances)
+    if has_accounts:
+        has_data = True
+    else:
+        has_data = has_balances_as_of(
+            user_id, budget_id, target_date
+        ) or has_state_as_of(user_id, budget_id, target_date)
     return balance, has_data
 
 

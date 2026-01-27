@@ -42,6 +42,57 @@ def list_balances(
     return response.data or []
 
 
+def _list_balances_as_of(
+    user_id: str, budget_id: str, target_date: date
+) -> list[dict[str, Any]]:
+    client = get_supabase_client()
+    response = (
+        client.table("daily_account_balances")
+        .select("account_id, amount, date")
+        .eq("budget_id", budget_id)
+        .eq("user_id", user_id)
+        .lte("date", target_date.isoformat())
+        .order("date", desc=True)
+        .execute()
+    )
+    return response.data or []
+
+
+def get_balances_as_of(
+    user_id: str, budget_id: str, target_date: date
+) -> dict[str, int]:
+    _ensure_budget_access(user_id, budget_id)
+    accounts = list_accounts(user_id, budget_id)
+    balances = _list_balances_as_of(user_id, budget_id, target_date)
+    amount_map: dict[str, int] = {}
+    for item in balances:
+        account_id = item.get("account_id")
+        if not account_id or account_id in amount_map:
+            continue
+        amount_map[account_id] = int(item.get("amount", 0))
+    return {
+        account["id"]: amount_map.get(account["id"], 0)
+        for account in accounts
+    }
+
+
+def has_balances_as_of(
+    user_id: str, budget_id: str, target_date: date
+) -> bool:
+    _ensure_budget_access(user_id, budget_id)
+    client = get_supabase_client()
+    response = (
+        client.table("daily_account_balances")
+        .select("account_id")
+        .eq("budget_id", budget_id)
+        .eq("user_id", user_id)
+        .lte("date", target_date.isoformat())
+        .limit(1)
+        .execute()
+    )
+    return bool(response.data)
+
+
 def upsert_balances(
     user_id: str,
     budget_id: str,

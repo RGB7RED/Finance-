@@ -18,11 +18,13 @@ from app.repositories.categories import create_category, list_categories
 from app.repositories.daily_account_balances import (
     calculate_totals,
     get_accounts_with_balances,
+    get_balances_as_of,
     upsert_balances,
 )
 from app.repositories.daily_state import (
     get_balance_for_date,
     get_debts,
+    get_debts_as_of,
     get_delta,
     upsert_debts,
 )
@@ -202,9 +204,19 @@ def _utc_today() -> dt.date:
 def _build_daily_state_response(
     user_id: str, budget_id: str, target_date: dt.date
 ) -> DailyStateOut:
-    accounts = get_accounts_with_balances(user_id, budget_id, target_date)
-    debts_record = get_debts(user_id, budget_id, target_date)
-    totals = calculate_totals(accounts)
+    accounts = list_accounts(user_id, budget_id)
+    balances_as_of = get_balances_as_of(user_id, budget_id, target_date)
+    debts_record = get_debts_as_of(user_id, budget_id, target_date)
+    accounts_with_amounts = [
+        {
+            "account_id": account["id"],
+            "name": account.get("name"),
+            "kind": account.get("kind"),
+            "amount": balances_as_of.get(account["id"], 0),
+        }
+        for account in accounts
+    ]
+    totals = calculate_totals(accounts_with_amounts)
     debts_total = int(debts_record.get("debt_cards_total", 0)) + int(
         debts_record.get("debt_other_total", 0)
     )
@@ -217,7 +229,7 @@ def _build_daily_state_response(
     )
     top_total = balance_today - balance_prev if has_today and has_prev else 0
     return DailyStateOut(
-        accounts=accounts,
+        accounts=accounts_with_amounts,
         debts=DailyStateDebts(
             credit_cards=int(debts_record.get("debt_cards_total", 0)),
             people_debts=int(debts_record.get("debt_other_total", 0)),
