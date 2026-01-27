@@ -673,7 +673,7 @@ export const createDebtOther = async (
     budget_id: string;
     amount: number;
     direction: "borrowed" | "repaid";
-    asset_side: "cash" | "bank";
+    account_id: string;
     date?: string;
   },
 ): Promise<DailyState> => {

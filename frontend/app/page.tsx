@@ -185,9 +185,7 @@ export default function HomePage() {
   const [debtOtherDirection, setDebtOtherDirection] = useState<
     "borrowed" | "repaid"
   >("borrowed");
-  const [debtOtherAssetSide, setDebtOtherAssetSide] = useState<
-    "cash" | "bank"
-  >("cash");
+  const [debtOtherAccountId, setDebtOtherAccountId] = useState("");
   const [goalTitle, setGoalTitle] = useState("");
   const [goalTargetAmount, setGoalTargetAmount] = useState("");
   const [goalDeadline, setGoalDeadline] = useState("");
@@ -509,7 +507,7 @@ export default function HomePage() {
     setDailyStateAccounts([]);
     setDebtOtherAmount("");
     setDebtOtherDirection("borrowed");
-    setDebtOtherAssetSide("cash");
+    setDebtOtherAccountId("");
     setGoalTitle("");
     setGoalTargetAmount("");
     setGoalDeadline("");
@@ -537,6 +535,21 @@ export default function HomePage() {
     });
     return map;
   }, [accounts]);
+
+  useEffect(() => {
+    if (!accounts.length) {
+      setDebtOtherAccountId("");
+      return;
+    }
+    if (!debtOtherAccountId) {
+      setDebtOtherAccountId(accounts[0].id);
+      return;
+    }
+    const exists = accounts.some((account) => account.id === debtOtherAccountId);
+    if (!exists) {
+      setDebtOtherAccountId(accounts[0].id);
+    }
+  }, [accounts, debtOtherAccountId]);
 
   const getTagLabel = (tag: "one_time" | "subscription" | null | undefined) =>
     tag === "subscription" ? "Подписка" : tag === "one_time" ? "Разовый" : "";
@@ -1184,6 +1197,10 @@ export default function HomePage() {
     if (!token || !activeBudgetId) {
       return;
     }
+    if (!debtOtherAccountId) {
+      setMessage("Выберите счет для операции");
+      return;
+    }
     const amount = Number.parseInt(debtOtherAmount, 10);
     if (!Number.isFinite(amount) || amount <= 0) {
       setMessage("Сумма должна быть больше нуля");
@@ -1196,11 +1213,15 @@ export default function HomePage() {
         budget_id: activeBudgetId,
         amount,
         direction: debtOtherDirection,
-        asset_side: debtOtherAssetSide,
+        account_id: debtOtherAccountId,
         date: selectedDate,
       });
       setDebtOtherAmount("");
-      await loadDailyStateData(token, activeBudgetId, selectedDate);
+      const [updatedAccounts] = await Promise.all([
+        listAccounts(token, activeBudgetId),
+        loadDailyStateData(token, activeBudgetId, selectedDate),
+      ]);
+      setAccounts(updatedAccounts);
       if (reportFrom && reportTo && reportFrom <= reportTo) {
         const [balance, summary] = await Promise.all([
           getReportBalance(token, activeBudgetId, reportFrom, reportTo),
@@ -1952,6 +1973,9 @@ export default function HomePage() {
 
                   <section>
                     <h2>Долги людям</h2>
+                    {!hasAccounts && (
+                      <p>Сначала добавьте хотя бы один счёт.</p>
+                    )}
                     <form onSubmit={handleCreateDebtOther}>
                       <label>
                         Направление:
@@ -1970,15 +1994,19 @@ export default function HomePage() {
                       <label>
                         Куда пришли/откуда ушли:
                         <select
-                          value={debtOtherAssetSide}
+                          value={debtOtherAccountId}
                           onChange={(event) =>
-                            setDebtOtherAssetSide(
-                              event.target.value as "cash" | "bank",
-                            )
+                            setDebtOtherAccountId(event.target.value)
                           }
+                          disabled={!hasAccounts}
+                          required
                         >
-                          <option value="cash">Наличка</option>
-                          <option value="bank">Безнал</option>
+                          <option value="">Выберите счет</option>
+                          {accounts.map((account) => (
+                            <option key={account.id} value={account.id}>
+                              {account.name}
+                            </option>
+                          ))}
                         </select>
                       </label>
                       <label>
@@ -1991,13 +2019,16 @@ export default function HomePage() {
                             setDebtOtherAmount(event.target.value)
                           }
                           required
+                          disabled={!hasAccounts}
                         />
                       </label>
                       <label>
                         Дата:
                         <input type="date" value={selectedDate} readOnly />
                       </label>
-                      <button type="submit">Сохранить</button>
+                      <button type="submit" disabled={!hasAccounts}>
+                        Сохранить
+                      </button>
                     </form>
                     {debtOtherErrorDetails && (
                       <div>

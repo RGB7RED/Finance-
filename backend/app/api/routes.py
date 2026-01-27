@@ -16,11 +16,6 @@ from app.repositories.budgets import (
 )
 from app.repositories.categories import create_category, list_categories
 from app.repositories.account_balance_events import (
-    RECONCILE_ADJUST_REASON,
-    calculate_totals,
-    create_balance_event,
-    get_accounts_with_balances,
-    get_balances_as_of,
     upsert_manual_adjust_event,
 )
 from app.repositories.daily_state import (
@@ -29,6 +24,11 @@ from app.repositories.daily_state import (
     get_debts_as_of,
     get_delta,
     upsert_debts,
+)
+from app.repositories.daily_account_balances import (
+    calculate_totals,
+    get_balances_as_of,
+    upsert_balances,
 )
 from app.repositories.debts_other import (
     delete_debt_other,
@@ -139,7 +139,8 @@ class DebtOtherCreateRequest(BaseModel):
     budget_id: str
     amount: int = Field(gt=0)
     direction: Literal["borrowed", "repaid"]
-    asset_side: Literal["cash", "bank"]
+    account_id: str
+    note: str | None = None
     date: Optional[dt.date] = None
 
 
@@ -383,23 +384,20 @@ def post_debts_other(
     payload: DebtOtherCreateRequest, current_user: dict = Depends(get_current_user)
 ) -> DailyStateOut:
     target_date = payload.date or _utc_today()
-    accounts_with_amounts = get_accounts_with_balances(
-        current_user["sub"], payload.budget_id, target_date
-    )
+    accounts = list_accounts(current_user["sub"], payload.budget_id)
     target_account = next(
-        (
-            account
-            for account in accounts_with_amounts
-            if account.get("kind") == payload.asset_side
-        ),
+        (account for account in accounts if account.get("id") == payload.account_id),
         None,
     )
     if not target_account:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Нет подходящего счета для операции",
+            detail="Счет не найден для бюджета",
         )
-    current_amount = int(target_account.get("amount", 0))
+    balances_as_of = get_balances_as_of(
+        current_user["sub"], payload.budget_id, target_date
+    )
+    current_amount = int(balances_as_of.get(payload.account_id, 0))
     delta = payload.amount if payload.direction == "borrowed" else -payload.amount
     next_amount = current_amount + delta
     if next_amount < 0:
@@ -425,13 +423,11 @@ def post_debts_other(
         credit_cards=int(debts_record.get("debt_cards_total", 0)),
         people_debts=debt_other_total,
     )
-    create_balance_event(
+    upsert_balances(
         current_user["sub"],
         payload.budget_id,
         target_date,
-        target_account["account_id"],
-        delta,
-        RECONCILE_ADJUST_REASON,
+        [{"account_id": payload.account_id, "amount": next_amount}],
     )
     return _build_daily_state_response(
         current_user["sub"], payload.budget_id, target_date
