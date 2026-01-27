@@ -15,11 +15,13 @@ from app.repositories.budgets import (
     reset_budget_data,
 )
 from app.repositories.categories import create_category, list_categories
-from app.repositories.daily_account_balances import (
+from app.repositories.account_balance_events import (
+    RECONCILE_ADJUST_REASON,
     calculate_totals,
+    create_balance_event,
     get_accounts_with_balances,
     get_balances_as_of,
-    upsert_balances,
+    upsert_manual_adjust_event,
 )
 from app.repositories.daily_state import (
     get_balance_for_date,
@@ -423,16 +425,13 @@ def post_debts_other(
         credit_cards=int(debts_record.get("debt_cards_total", 0)),
         people_debts=debt_other_total,
     )
-    upsert_balances(
+    create_balance_event(
         current_user["sub"],
         payload.budget_id,
         target_date,
-        [
-            {
-                "account_id": target_account["account_id"],
-                "amount": next_amount,
-            }
-        ],
+        target_account["account_id"],
+        delta,
+        RECONCILE_ADJUST_REASON,
     )
     return _build_daily_state_response(
         current_user["sub"], payload.budget_id, target_date
@@ -493,14 +492,18 @@ def put_daily_state(
                 + ", ".join(invalid_accounts)
             ),
         )
-    balances = [
-        {"account_id": item.account_id, "amount": item.amount}
-        for item in payload.accounts
-    ]
     try:
-        result = upsert_balances(
-            user_id, payload.budget_id, payload.date, balances
-        )
+        result = []
+        for item in payload.accounts:
+            result.append(
+                upsert_manual_adjust_event(
+                    user_id,
+                    payload.budget_id,
+                    payload.date,
+                    item.account_id,
+                    item.amount,
+                )
+            )
         logger.info(
             "daily_state_update balances_updated=%s",
             len(result),

@@ -8,9 +8,9 @@ from fastapi.encoders import jsonable_encoder
 from postgrest.exceptions import APIError
 
 from app.integrations.supabase_client import get_supabase_client
-from app.repositories.daily_account_balances import (
-    get_balances_as_of,
-    upsert_balances,
+from app.repositories.account_balance_events import (
+    TRANSFER_REASON,
+    create_balance_event,
 )
 
 
@@ -155,29 +155,32 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     serialized_payload = _serialize_payload(payload)
-    rollback_balances: list[dict[str, Any]] | None = None
+    rollback_event_ids: list[str] | None = None
 
     if tx_type == "transfer":
         target_date = _parse_payload_date(payload.get("date"))
         amount = int(payload.get("amount", 0))
-        balances_as_of = get_balances_as_of(user_id, budget_id, target_date)
-        from_base = balances_as_of.get(account_id, 0)
-        to_base = balances_as_of.get(to_account_id, 0)
-        new_balances = [
-            {
-                "account_id": account_id,
-                "amount": from_base - amount,
-            },
-            {
-                "account_id": to_account_id,
-                "amount": to_base + amount,
-            },
+        from_event = create_balance_event(
+            user_id,
+            budget_id,
+            target_date,
+            account_id,
+            -amount,
+            TRANSFER_REASON,
+        )
+        to_event = create_balance_event(
+            user_id,
+            budget_id,
+            target_date,
+            to_account_id,
+            amount,
+            TRANSFER_REASON,
+        )
+        rollback_event_ids = [
+            event_id
+            for event_id in (from_event.get("id"), to_event.get("id"))
+            if event_id
         ]
-        rollback_balances = [
-            {"account_id": account_id, "amount": from_base},
-            {"account_id": to_account_id, "amount": to_base},
-        ]
-        upsert_balances(user_id, budget_id, target_date, new_balances)
 
     client = get_supabase_client()
     try:
@@ -187,12 +190,11 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             .execute()
         )
     except APIError as exc:
-        if rollback_balances is not None:
+        if rollback_event_ids is not None:
             try:
-                target_date = _parse_payload_date(payload.get("date"))
-                upsert_balances(
-                    user_id, budget_id, target_date, rollback_balances
-                )
+                client.table("account_balance_events").delete().in_(
+                    "id", rollback_event_ids
+                ).execute()
             except Exception:
                 pass
         detail = getattr(exc, "message", None) or str(exc)
