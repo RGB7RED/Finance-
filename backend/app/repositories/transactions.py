@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -7,6 +8,10 @@ from fastapi.encoders import jsonable_encoder
 from postgrest.exceptions import APIError
 
 from app.integrations.supabase_client import get_supabase_client
+from app.repositories.daily_account_balances import (
+    get_balances_as_of,
+    upsert_balances,
+)
 
 
 def _ensure_budget_access(user_id: str, budget_id: str) -> None:
@@ -80,6 +85,17 @@ def _serialize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return jsonable_encoder(payload)
 
 
+def _parse_payload_date(value: Any) -> date:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        return date.fromisoformat(value)
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid date for transaction",
+    )
+
+
 def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     budget_id = payload.get("budget_id")
     if not budget_id:
@@ -139,6 +155,29 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     serialized_payload = _serialize_payload(payload)
+    rollback_balances: list[dict[str, Any]] | None = None
+
+    if tx_type == "transfer":
+        target_date = _parse_payload_date(payload.get("date"))
+        amount = int(payload.get("amount", 0))
+        balances_as_of = get_balances_as_of(user_id, budget_id, target_date)
+        from_base = balances_as_of.get(account_id, 0)
+        to_base = balances_as_of.get(to_account_id, 0)
+        new_balances = [
+            {
+                "account_id": account_id,
+                "amount": from_base - amount,
+            },
+            {
+                "account_id": to_account_id,
+                "amount": to_base + amount,
+            },
+        ]
+        rollback_balances = [
+            {"account_id": account_id, "amount": from_base},
+            {"account_id": to_account_id, "amount": to_base},
+        ]
+        upsert_balances(user_id, budget_id, target_date, new_balances)
 
     client = get_supabase_client()
     try:
@@ -148,6 +187,14 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             .execute()
         )
     except APIError as exc:
+        if rollback_balances is not None:
+            try:
+                target_date = _parse_payload_date(payload.get("date"))
+                upsert_balances(
+                    user_id, budget_id, target_date, rollback_balances
+                )
+            except Exception:
+                pass
         detail = getattr(exc, "message", None) or str(exc)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
