@@ -649,6 +649,9 @@ export default function HomePage() {
   const reconcileDiff = reconcileSummary?.diff ?? 0;
   const reconcileDiffAbs = Math.abs(reconcileDiff);
   const isReconciled = reconcileSummary?.is_ok ?? true;
+  const deltaToApply = -reconcileDiff;
+  const isReconciledOrClose = isReconciled || Math.abs(deltaToApply) <= 1;
+  const shouldShowQuickAdjust = Math.abs(deltaToApply) > 1;
   const showIncomeSuggestion =
     incomeSuggestion && incomeSuggestion.confidence >= 0.6;
   const showExpenseSuggestion =
@@ -1356,11 +1359,18 @@ export default function HomePage() {
       accountId,
       delta,
     });
-    if (!token || !activeBudgetId) {
+    if (!activeBudgetId || !selectedDate || !accountId) {
+      setQuickAdjustErrorDetails(null);
+      setQuickAdjustError("missing budget/date/account");
+      return;
+    }
+    if (!token) {
       console.log("[quick-adjust] guard: missing token/budget", {
         tokenMissing: !token,
         activeBudgetMissing: !activeBudgetId,
       });
+      setQuickAdjustErrorDetails(null);
+      setQuickAdjustError("missing auth token");
       return;
     }
     if (isQuickAdjusting) {
@@ -1373,6 +1383,8 @@ export default function HomePage() {
       (account) => account.account_id === accountId,
     );
     if (!currentAccount) {
+      setQuickAdjustErrorDetails(null);
+      setQuickAdjustError("missing budget/date/account");
       return;
     }
     const currentValue = parseAmount(currentAccount.amountText);
@@ -1424,7 +1436,7 @@ export default function HomePage() {
         httpStatus: apiError.status,
         responseText: apiError.text,
       });
-      setQuickAdjustError(String(error));
+      setQuickAdjustError(apiError.message || String(error));
       setMessage(buildErrorMessage("Не удалось обновить состояние дня", error));
     } finally {
       console.log("[quick-adjust] finally: reset isQuickAdjusting");
@@ -2181,7 +2193,7 @@ export default function HomePage() {
                     Верхний итог: {topDayTotal} ₽, Нижний итог: {bottomDayTotal}{" "}
                     ₽, Разница: {reconcileDiff} ₽
                   </p>
-                  {isReconciled ? (
+                  {isReconciledOrClose ? (
                     <p>Сверка: OK</p>
                   ) : (
                     <>
@@ -2192,21 +2204,24 @@ export default function HomePage() {
                           : "Остатки меньше, чем операции. Нужна корректировка."}
                       </p>
                       <div>
-                        {dailyStateAccounts.map((account) => (
-                          <button
-                            key={account.account_id}
-                            type="button"
-                            onClick={() =>
-                              handleQuickAdjust(
-                                account.account_id,
-                                -reconcileDiff,
-                              )
-                            }
-                            disabled={isQuickAdjusting}
-                          >
-                            Изменить {account.name} на {-reconcileDiff} ₽
-                          </button>
-                        ))}
+                        {shouldShowQuickAdjust &&
+                          dailyStateAccounts.map((account) => (
+                            <button
+                              key={account.account_id}
+                              type="button"
+                              onClick={() =>
+                                handleQuickAdjust(
+                                  account.account_id,
+                                  deltaToApply,
+                                )
+                              }
+                              disabled={isQuickAdjusting}
+                            >
+                              {isQuickAdjusting
+                                ? "Применяю…"
+                                : `Изменить ${account.name} на ${deltaToApply} ₽`}
+                            </button>
+                          ))}
                       </div>
                       {quickAdjustErrorDetails && (
                         <div>
@@ -2220,7 +2235,7 @@ export default function HomePage() {
                           </p>
                         </div>
                       )}
-                      {quickAdjustError && <p>{quickAdjustError}</p>}
+                      {quickAdjustError && <p>message: {quickAdjustError}</p>}
                     </>
                   )}
                 </section>
