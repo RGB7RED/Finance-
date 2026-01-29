@@ -65,6 +65,7 @@ import {
   updateDailyState,
 } from "../src/lib/api";
 import { clearToken, getToken, setToken } from "../src/lib/auth";
+import { formatRub } from "../src/lib/format";
 import { getTelegramInitData } from "../src/lib/telegram";
 
 type Status = "loading" | "unauthorized" | "ready" | "error";
@@ -240,7 +241,6 @@ export default function HomePage() {
     useState<FormErrorDetails | null>(null);
   const [quickAdjustError, setQuickAdjustError] = useState<string | null>(null);
   const [isQuickAdjusting, setIsQuickAdjusting] = useState(false);
-  const [lastQuickAdjustClick, setLastQuickAdjustClick] = useState("");
 
   const setDailyStateFromData = (state: DailyState) => {
     setDailyState(state);
@@ -765,6 +765,17 @@ export default function HomePage() {
   const monthNetTotal = monthReport?.month_net ?? 0;
   const monthAvgNet = monthReport?.avg_net_per_day ?? 0;
   const hasAccounts = accounts.length > 0;
+  const orderedDailyStateAccounts = useMemo(() => {
+    const order: Record<string, number> = { bank: 0, cash: 1 };
+    return [...dailyStateAccounts].sort((first, second) => {
+      const orderDiff =
+        (order[first.kind] ?? 99) - (order[second.kind] ?? 99);
+      if (orderDiff !== 0) {
+        return orderDiff;
+      }
+      return first.name.localeCompare(second.name);
+    });
+  }, [dailyStateAccounts]);
 
   const renderCategoryTree = (parentId: string | null) => {
     const key = parentId ?? "root";
@@ -1410,7 +1421,6 @@ export default function HomePage() {
 
   const handleQuickAdjust = async (accountId: string, delta: number) => {
     const clickStamp = new Date().toISOString();
-    setLastQuickAdjustClick(clickStamp);
     console.log("[quick-adjust] click", {
       clickStamp,
       accountId,
@@ -1620,26 +1630,113 @@ export default function HomePage() {
 
   const DayTab = () => (
     <div className="mf-stack">
-      <Card title="Состояние дня (верхняя таблица)">
+      <div
+        className="mf-row"
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 5,
+          background: "var(--bg)",
+          paddingBottom: "8px",
+        }}
+      >
+        <strong>Дата: {selectedDate}</strong>
+        <Input
+          type="date"
+          value={selectedDate}
+          onChange={(event) => setSelectedDate(event.target.value)}
+        />
+      </div>
+
+      <div className="mf-grid-2">
+        <Card>
+          <div className="mf-row" style={{ justifyContent: "space-between" }}>
+            <div>
+              <div className="mf-small">Баланс</div>
+              <div style={{ fontSize: "22px", fontWeight: 700 }}>
+                {formatRub(balanceTotal)}
+              </div>
+            </div>
+          </div>
+        </Card>
+        <Card>
+          <div className="mf-row" style={{ justifyContent: "space-between" }}>
+            <div>
+              <div className="mf-small">Остаток</div>
+              <div style={{ fontSize: "22px", fontWeight: 700 }}>
+                {formatRub(assetsTotal)}
+              </div>
+            </div>
+          </div>
+        </Card>
+        <Card>
+          <div className="mf-row" style={{ justifyContent: "space-between" }}>
+            <div>
+              <div className="mf-small">Долги</div>
+              <div style={{ fontSize: "22px", fontWeight: 700 }}>
+                {formatRub(debtsTotal)}
+              </div>
+            </div>
+          </div>
+        </Card>
+        <Card>
+          <div className="mf-row" style={{ justifyContent: "space-between" }}>
+            <div>
+              <div className="mf-small">Итог дня</div>
+              <div style={{ fontSize: "22px", fontWeight: 700 }}>
+                {formatRub(bottomDayTotal)}
+              </div>
+            </div>
+            {hasAccounts && (
+              <Pill
+                variant={
+                  reconcileDiffAbs <= 1
+                    ? "ok"
+                    : reconcileDiffAbs <= 100
+                      ? "warn"
+                      : "err"
+                }
+                text={
+                  reconcileDiffAbs <= 1
+                    ? "OK"
+                    : `Δ ${formatRub(reconcileDiffAbs)}`
+                }
+              />
+            )}
+          </div>
+        </Card>
+      </div>
+
+      <Card title="Состояние дня">
         {!hasAccounts ? (
           <p>Создайте хотя бы один счёт, чтобы вести операции.</p>
         ) : (
-          <>
-            <div className="mf-row">
-              {dailyStateAccounts.map((account) => (
-                <Input
+          <div className="mf-stack">
+            <div className="mf-stack mf-day-accounts">
+              {orderedDailyStateAccounts.map((account) => (
+                <div
                   key={account.account_id}
-                  label={`${account.name} (${account.kind})`}
-                  type="number"
-                  value={account.amountText}
-                  onChange={(event) =>
-                    handleDailyStateAccountChange(
-                      account.account_id,
-                      event.target.value,
-                    )
-                  }
-                />
+                  className="mf-row"
+                  style={{ justifyContent: "space-between", width: "100%" }}
+                >
+                  <div>
+                    <div>{account.name}</div>
+                    <div className="mf-small">{account.kind}</div>
+                  </div>
+                  <Input
+                    type="number"
+                    value={account.amountText}
+                    onChange={(event) =>
+                      handleDailyStateAccountChange(
+                        account.account_id,
+                        event.target.value,
+                      )
+                    }
+                  />
+                </div>
               ))}
+            </div>
+            <div className="mf-row">
               <Input
                 label="Кредитки/рассрочки"
                 type="number"
@@ -1657,18 +1754,10 @@ export default function HomePage() {
                 }
               />
             </div>
-            <div className="mf-row">
-              <p className="mf-muted">Наличка (авто): {cashTotal} ₽</p>
-              <p className="mf-muted">Безнал (авто): {noncashTotal} ₽</p>
-              <p className="mf-muted">Остаток (авто): {assetsTotal} ₽</p>
-              <p className="mf-muted">Долги: {debtsTotal} ₽</p>
-              <p className="mf-muted">Баланс (авто): {balanceTotal} ₽</p>
-              <p className="mf-muted">Итог за день (верхний): {topDayTotal} ₽</p>
-            </div>
             <Button onClick={handleSaveDailyState}>
-              Сохранить состояние дня
+              Сохранить состояние
             </Button>
-          </>
+          </div>
         )}
       </Card>
 
@@ -1676,94 +1765,168 @@ export default function HomePage() {
         title="Сверка"
         right={
           hasAccounts ? (
-            isReconciledOrClose ? (
-              <Pill variant="ok" text="OK" />
-            ) : (
-              <Pill
-                variant="warn"
-                text={`Расхождение ${reconcileDiffAbs} ₽`}
-              />
-            )
+            <Pill
+              variant={
+                reconcileDiffAbs <= 1
+                  ? "ok"
+                  : reconcileDiffAbs <= 100
+                    ? "warn"
+                    : "err"
+              }
+              text={
+                reconcileDiffAbs <= 1
+                  ? "OK"
+                  : `Δ ${formatRub(reconcileDiffAbs)}`
+              }
+            />
           ) : null
         }
       >
         {!hasAccounts ? (
           <p>Сначала добавьте хотя бы один счёт.</p>
         ) : (
-          <>
-            <p className="mf-faint">
-              lastQuickAdjustClick: {lastQuickAdjustClick || "—"}
-            </p>
-            <p>
-              Верхний итог: {topDayTotal} ₽, Нижний итог: {bottomDayTotal} ₽,
-              Разница: {reconcileDiff} ₽
-            </p>
-            {isReconciledOrClose ? (
-              <p>Сверка: OK</p>
-            ) : (
-              <>
-                <p>Сверка: расхождение {reconcileDiffAbs} ₽</p>
-                <p>
-                  {reconcileDiff > 1
-                    ? "Остатки больше, чем операции. Нужна корректировка."
-                    : "Остатки меньше, чем операции. Нужна корректировка."}
-                </p>
-                <div className="mf-stack">
-                  {shouldShowQuickAdjust &&
-                    dailyStateAccounts.map((account) => {
-                      const currentValue = getAccountCurrentValue(account);
-                      const nextValue = currentValue + deltaToApply;
-                      const isInsufficient = nextValue < 0;
-                      const insufficientMessage =
-                        buildQuickAdjustInsufficientMessage(
-                          currentValue,
-                          deltaToApply,
-                          nextValue,
-                        );
-                      return (
-                        <div key={account.account_id} className="mf-stack">
-                          <Button
-                            variant="secondary"
-                            onClick={() =>
-                              handleQuickAdjust(
-                                account.account_id,
-                                deltaToApply,
-                              )
-                            }
-                            disabled={isQuickAdjusting || isInsufficient}
-                            title={
-                              isInsufficient ? insufficientMessage : undefined
-                            }
-                          >
-                            {isQuickAdjusting
-                              ? "Применяю…"
-                              : `Изменить ${account.name} на ${deltaToApply} ₽`}
-                          </Button>
-                          {isInsufficient && <p>{insufficientMessage}</p>}
-                        </div>
-                      );
-                    })}
-                </div>
-                {quickAdjustErrorDetails && (
-                  <div>
-                    <p>
-                      http_status:{" "}
-                      {quickAdjustErrorDetails.httpStatus ?? "unknown"}
-                    </p>
-                    <p>
-                      response_text:{" "}
-                      {quickAdjustErrorDetails.responseText ?? "unknown"}
-                    </p>
-                  </div>
-                )}
-                {quickAdjustError && <p>{quickAdjustError}</p>}
-              </>
+          <div className="mf-stack">
+            <table className="mf-table">
+              <thead>
+                <tr>
+                  <th>Верхний итог</th>
+                  <th>Нижний итог</th>
+                  <th>Разница</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>{formatRub(topDayTotal)}</td>
+                  <td>{formatRub(bottomDayTotal)}</td>
+                  <td>{formatRub(reconcileDiff)}</td>
+                </tr>
+              </tbody>
+            </table>
+            {shouldShowQuickAdjust && (
+              <div className="mf-stack">
+                {orderedDailyStateAccounts.map((account) => {
+                  const currentValue = getAccountCurrentValue(account);
+                  const nextValue = currentValue + deltaToApply;
+                  const isInsufficient = nextValue < 0;
+                  const insufficientMessage =
+                    buildQuickAdjustInsufficientMessage(
+                      currentValue,
+                      deltaToApply,
+                      nextValue,
+                    );
+                  return (
+                    <div key={account.account_id} className="mf-stack">
+                      <Button
+                        variant="secondary"
+                        onClick={() =>
+                          handleQuickAdjust(account.account_id, deltaToApply)
+                        }
+                        disabled={isQuickAdjusting || isInsufficient}
+                        title={isInsufficient ? insufficientMessage : undefined}
+                      >
+                        {isQuickAdjusting
+                          ? "Применяю…"
+                          : `Изменить ${account.name} на ${formatRub(
+                              deltaToApply,
+                            )}`}
+                      </Button>
+                      {isInsufficient && <p>{insufficientMessage}</p>}
+                    </div>
+                  );
+                })}
+              </div>
             )}
-          </>
+            {quickAdjustErrorDetails && (
+              <div>
+                <p>
+                  http_status: {quickAdjustErrorDetails.httpStatus ?? "unknown"}
+                </p>
+                <p>
+                  response_text:{" "}
+                  {quickAdjustErrorDetails.responseText ?? "unknown"}
+                </p>
+              </div>
+            )}
+            {quickAdjustError && <p>{quickAdjustError}</p>}
+          </div>
         )}
       </Card>
 
-      <TransactionsCard title="Операции за день" showSummary />
+      <Card title="Операции за день">
+        {transactions.length ? (
+          <div className="mf-stack">
+            {transactions.map((tx, index) => {
+              const accountName =
+                (tx.account_id && accountMap.get(tx.account_id)?.name) ||
+                "Счет";
+              const toAccountName =
+                (tx.to_account_id && accountMap.get(tx.to_account_id)?.name) ||
+                "Счет";
+              const goalTitle =
+                (tx.goal_id &&
+                  goals.find((goal) => goal.id === tx.goal_id)?.title) ||
+                null;
+              const categoryName =
+                (tx.category_id &&
+                  categories.find((cat) => cat.id === tx.category_id)?.name) ||
+                null;
+              const isGoalTransfer = tx.kind === "goal_transfer";
+              const marker = isGoalTransfer ? "goal_transfer" : tx.type;
+              const metaParts: string[] = [];
+
+              if (tx.type === "transfer") {
+                metaParts.push(`${accountName} → ${toAccountName}`);
+              } else {
+                metaParts.push(accountName);
+              }
+
+              if (isGoalTransfer) {
+                metaParts.push(`Цель: ${goalTitle ?? "—"}`);
+              }
+
+              if (tx.type === "expense" && !isGoalTransfer) {
+                metaParts.push(categoryName ?? "Без категории");
+              }
+
+              return (
+                <div key={tx.id}>
+                  <div
+                    className="mf-row"
+                    style={{
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      width: "100%",
+                    }}
+                  >
+                    <div style={{ flex: 1 }}>
+                      <div className="mf-row" style={{ gap: "8px" }}>
+                        <span className="mf-small">{marker}</span>
+                        <span>{tx.note || "Без описания"}</span>
+                      </div>
+                      <div className="mf-small">{metaParts.join(" · ")}</div>
+                    </div>
+                    <div className="mf-row" style={{ justifyContent: "end" }}>
+                      <strong>{formatRub(tx.amount)}</strong>
+                      <Button
+                        variant="danger"
+                        className="mf-button--small"
+                        onClick={() => handleDeleteTransaction(tx.id)}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                  {index < transactions.length - 1 && (
+                    <div className="mf-divider mf-space" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="mf-muted">Нет операций</p>
+        )}
+      </Card>
     </div>
   );
 
