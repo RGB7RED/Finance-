@@ -106,7 +106,7 @@ def balance_by_day(
         .execute()
     )
     debts_records = {item.get("date"): item for item in debts_response.data or []}
-    accounts = list_accounts(user_id, budget_id)
+    accounts = list_accounts(user_id, budget_id, date_to)
     account_kind = {
         account["id"]: account.get("kind") for account in accounts
     }
@@ -293,7 +293,7 @@ def month_report(user_id: str, budget_id: str, month: str) -> dict[str, Any]:
 
     start_day = date_from - timedelta(days=1)
     end_day = date_to - timedelta(days=1)
-    accounts = list_accounts(user_id, budget_id)
+    accounts = list_accounts(user_id, budget_id, end_day)
     account_kind = {
         account["id"]: account.get("kind") for account in accounts
     }

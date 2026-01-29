@@ -57,6 +57,8 @@ class AccountCreateRequest(BaseModel):
     budget_id: str
     name: str
     kind: str
+    active_from: dt.date
+    initial_amount: int = Field(ge=0)
 
 
 class CategoryCreateRequest(BaseModel):
@@ -139,6 +141,7 @@ class DebtOtherCreateRequest(BaseModel):
     budget_id: str
     amount: int = Field(gt=0)
     direction: Literal["borrowed", "repaid"]
+    debt_type: Literal["people", "cards"]
     account_id: str
     note: str | None = None
     date: Optional[dt.date] = None
@@ -192,7 +195,7 @@ def _utc_today() -> dt.date:
 def _build_daily_state_response(
     user_id: str, budget_id: str, target_date: dt.date
 ) -> DailyStateOut:
-    accounts = list_accounts(user_id, budget_id)
+    accounts = list_accounts(user_id, budget_id, target_date)
     balances_as_of = get_balances_as_of(user_id, budget_id, target_date)
     debts_record = get_debts_as_of(user_id, budget_id, target_date)
     accounts_with_amounts = [
@@ -295,16 +298,22 @@ def post_budgets_reset(
 
 @router.get("/accounts")
 def get_accounts(
-    budget_id: str, current_user: dict = Depends(get_current_user)
+    budget_id: str,
+    as_of: dt.date | None = None,
+    current_user: dict = Depends(get_current_user),
 ) -> list[dict]:
-    return list_accounts(current_user["sub"], budget_id)
+    target_date = as_of or _utc_today()
+    return list_accounts(current_user["sub"], budget_id, target_date)
 
 
 @router.get("/accounts/exists")
 def get_accounts_exists(
-    budget_id: str, current_user: dict = Depends(get_current_user)
+    budget_id: str,
+    as_of: dt.date | None = None,
+    current_user: dict = Depends(get_current_user),
 ) -> dict[str, bool]:
-    accounts = list_accounts(current_user["sub"], budget_id)
+    target_date = as_of or _utc_today()
+    accounts = list_accounts(current_user["sub"], budget_id, target_date)
     return {"has_accounts": len(accounts) > 0}
 
 
@@ -313,7 +322,12 @@ def post_accounts(
     payload: AccountCreateRequest, current_user: dict = Depends(get_current_user)
 ) -> dict:
     return create_account(
-        current_user["sub"], payload.budget_id, payload.name, payload.kind
+        current_user["sub"],
+        payload.budget_id,
+        payload.name,
+        payload.kind,
+        payload.active_from,
+        payload.initial_amount,
     )
 
 
@@ -369,7 +383,7 @@ def post_debts_other(
     payload: DebtOtherCreateRequest, current_user: dict = Depends(get_current_user)
 ) -> DailyStateOut:
     target_date = payload.date or _utc_today()
-    accounts = list_accounts(current_user["sub"], payload.budget_id)
+    accounts = list_accounts(current_user["sub"], payload.budget_id, target_date)
     target_account = next(
         (account for account in accounts if account.get("id") == payload.account_id),
         None,
@@ -393,10 +407,14 @@ def post_debts_other(
     debts_record = get_debts_as_of(
         current_user["sub"], payload.budget_id, target_date
     )
-    debt_other_total = int(debts_record.get("debt_other_total", 0)) + (
-        payload.amount if payload.direction == "borrowed" else -payload.amount
-    )
-    if debt_other_total < 0:
+    debt_delta = payload.amount if payload.direction == "borrowed" else -payload.amount
+    debt_cards_total = int(debts_record.get("debt_cards_total", 0))
+    debt_other_total = int(debts_record.get("debt_other_total", 0))
+    if payload.debt_type == "cards":
+        debt_cards_total += debt_delta
+    else:
+        debt_other_total += debt_delta
+    if debt_cards_total < 0 or debt_other_total < 0:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Нельзя уменьшить долг ниже 0",
@@ -406,7 +424,7 @@ def post_debts_other(
         current_user["sub"],
         payload.budget_id,
         target_date,
-        credit_cards=int(debts_record.get("debt_cards_total", 0)),
+        credit_cards=debt_cards_total,
         people_debts=debt_other_total,
     )
     upsert_manual_adjust_event(
@@ -466,7 +484,7 @@ def put_daily_state(
         len(account_ids),
         account_ids,
     )
-    allowed_accounts = list_accounts(user_id, payload.budget_id)
+    allowed_accounts = list_accounts(user_id, payload.budget_id, payload.date)
     allowed_account_ids = {account["id"] for account in allowed_accounts}
     invalid_accounts = [
         account_id

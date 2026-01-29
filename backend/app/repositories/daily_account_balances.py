@@ -62,7 +62,7 @@ def get_balances_as_of(
     user_id: str, budget_id: str, target_date: date
 ) -> dict[str, int]:
     _ensure_budget_access(user_id, budget_id)
-    accounts = list_accounts(user_id, budget_id)
+    accounts = list_accounts(user_id, budget_id, target_date)
     balances = _list_balances_as_of(user_id, budget_id, target_date)
     amount_map: dict[str, int] = {}
     for item in balances:
@@ -131,7 +131,7 @@ def upsert_balances(
 def get_accounts_with_balances(
     user_id: str, budget_id: str, target_date: date
 ) -> list[dict[str, Any]]:
-    accounts = list_accounts(user_id, budget_id)
+    accounts = list_accounts(user_id, budget_id, target_date)
     balances = list_balances(user_id, budget_id, target_date)
     amount_map = {
         item.get("account_id"): int(item.get("amount", 0))
