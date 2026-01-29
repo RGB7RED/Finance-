@@ -230,6 +230,22 @@ export default function HomePage() {
     return Number.isFinite(parsed) ? parsed : 0;
   };
 
+  const parseAmountOrNull = (value: string): number | null => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = Number.parseInt(trimmed, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const getAccountCurrentValue = (
+    account: DailyStateAccount & { amountText: string },
+  ): number => {
+    const parsedTextValue = parseAmountOrNull(account.amountText);
+    return parsedTextValue ?? account.amount ?? 0;
+  };
+
   const loadDailyStateData = async (
     authToken: string,
     budgetId: string,
@@ -1336,10 +1352,17 @@ export default function HomePage() {
     if (Number.parseInt(value, 10) < 0) {
       return;
     }
+    const parsedValue = Number.parseInt(value, 10);
     setDailyStateAccounts((prev) =>
       prev.map((account) =>
         account.account_id === accountId
-          ? { ...account, amountText: value }
+          ? {
+              ...account,
+              amountText: value,
+              amount: Number.isFinite(parsedValue)
+                ? parsedValue
+                : account.amount,
+            }
           : account,
       ),
     );
@@ -1408,7 +1431,8 @@ export default function HomePage() {
       setQuickAdjustError("missing budget/date/account");
       return;
     }
-    const currentValue = parseAmount(currentAccount.amountText);
+    const parsedTextValue = parseAmountOrNull(currentAccount.amountText);
+    const currentValue = parsedTextValue ?? currentAccount.amount ?? 0;
     const nextValue = currentValue + delta;
     if (nextValue < 0) {
       console.log("[quick-adjust] guard: nextValue < 0", {
@@ -1416,12 +1440,15 @@ export default function HomePage() {
         nextValue,
         delta,
       });
-      setMessage("Нельзя уменьшить ниже нуля");
+      setQuickAdjustErrorDetails(null);
+      setQuickAdjustError(
+        "Недостаточно средств на счете для корректировки, выберите другой счет / измените счет",
+      );
       return;
     }
     const updatedAccounts = dailyStateAccounts.map((account) =>
       account.account_id === accountId
-        ? { ...account, amountText: String(nextValue) }
+        ? { ...account, amountText: String(nextValue), amount: nextValue }
         : account,
     );
     setDailyStateAccounts(updatedAccounts);
@@ -2237,21 +2264,46 @@ export default function HomePage() {
                       <div>
                         {shouldShowQuickAdjust &&
                           dailyStateAccounts.map((account) => (
-                            <button
-                              key={account.account_id}
-                              type="button"
-                              onClick={() =>
-                                handleQuickAdjust(
-                                  account.account_id,
-                                  deltaToApply,
-                                )
-                              }
-                              disabled={isQuickAdjusting}
-                            >
-                              {isQuickAdjusting
-                                ? "Применяю…"
-                                : `Изменить ${account.name} на ${deltaToApply} ₽`}
-                            </button>
+                            <div key={account.account_id}>
+                              {(() => {
+                                const currentValue =
+                                  getAccountCurrentValue(account);
+                                const nextValue = currentValue + deltaToApply;
+                                const isInsufficient = nextValue < 0;
+                                return (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleQuickAdjust(
+                                          account.account_id,
+                                          deltaToApply,
+                                        )
+                                      }
+                                      disabled={
+                                        isQuickAdjusting || isInsufficient
+                                      }
+                                      title={
+                                        isInsufficient
+                                          ? "Недостаточно средств на счете для корректировки"
+                                          : undefined
+                                      }
+                                    >
+                                      {isQuickAdjusting
+                                        ? "Применяю…"
+                                        : `Изменить ${account.name} на ${deltaToApply} ₽`}
+                                    </button>
+                                    {isInsufficient && (
+                                      <p>
+                                        Недостаточно средств на счете для
+                                        корректировки, выберите другой счет /
+                                        измените счет
+                                      </p>
+                                    )}
+                                  </>
+                                );
+                              })()}
+                            </div>
                           ))}
                       </div>
                       {quickAdjustErrorDetails && (
@@ -2266,7 +2318,7 @@ export default function HomePage() {
                           </p>
                         </div>
                       )}
-                      {quickAdjustError && <p>message: {quickAdjustError}</p>}
+                      {quickAdjustError && <p>{quickAdjustError}</p>}
                     </>
                   )}
                 </section>
