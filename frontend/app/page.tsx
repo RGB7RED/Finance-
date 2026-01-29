@@ -245,6 +245,22 @@ export default function HomePage() {
     return parseAmountFromText(value);
   };
 
+  const buildDebtsPayload = () => {
+    const creditCards = parseAmountOrNull(dailyStateForm.debt_cards_total);
+    const peopleDebts = parseAmountOrNull(dailyStateForm.debt_other_total);
+    if (creditCards === null && peopleDebts === null) {
+      return undefined;
+    }
+    const debts: { credit_cards?: number; people_debts?: number } = {};
+    if (creditCards !== null) {
+      debts.credit_cards = creditCards;
+    }
+    if (peopleDebts !== null) {
+      debts.people_debts = peopleDebts;
+    }
+    return debts;
+  };
+
   const getAccountCurrentValue = (
     account: DailyStateAccount & { amountText: string; amount: number },
   ): number => {
@@ -1268,6 +1284,7 @@ export default function HomePage() {
     }
     setMessage("");
     try {
+      const debts = buildDebtsPayload();
       const payload = {
         budget_id: activeBudgetId,
         date: selectedDate,
@@ -1275,10 +1292,7 @@ export default function HomePage() {
           account_id: account.account_id,
           amount: parseAmount(account.amountText),
         })),
-        debts: {
-          credit_cards: parseAmount(dailyStateForm.debt_cards_total),
-          people_debts: parseAmount(dailyStateForm.debt_other_total),
-        },
+        debts,
       };
       const updated = await updateDailyState(token, payload);
       setDailyStateFromData(updated);
@@ -1353,6 +1367,7 @@ export default function HomePage() {
     setQuickAdjustError(null);
     setIsQuickAdjusting(true);
     try {
+      const debts = buildDebtsPayload();
       console.log("[quick-adjust] sending update", {
         budgetId: activeBudgetId,
         date: selectedDate,
@@ -1366,10 +1381,7 @@ export default function HomePage() {
           account_id: account.account_id,
           amount: parseAmount(account.amountText),
         })),
-        debts: {
-          credit_cards: parseAmount(dailyStateForm.debt_cards_total),
-          people_debts: parseAmount(dailyStateForm.debt_other_total),
-        },
+        debts,
       });
       console.log("[quick-adjust] updateDailyState ok");
       await loadDailyStateData(token, activeBudgetId, selectedDate);
