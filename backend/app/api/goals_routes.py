@@ -1,5 +1,7 @@
-from datetime import date
-from typing import Literal
+from __future__ import annotations
+
+from datetime import date as dt_date
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -20,14 +22,14 @@ class GoalCreateRequest(BaseModel):
     budget_id: str
     title: str
     target_amount: int = Field(gt=0)
-    deadline: date | None = None
+    deadline: Optional[dt_date] = None
 
 
 class GoalUpdateRequest(BaseModel):
     title: str | None = None
     target_amount: int | None = Field(default=None, gt=0)
     current_amount: int | None = Field(default=None, ge=0)
-    deadline: date | None = None
+    deadline: Optional[dt_date] = None
     status: Literal["active", "done", "archived"] | None = None
 
 
@@ -38,7 +40,7 @@ class GoalOut(BaseModel):
     title: str
     target_amount: int
     current_amount: int
-    deadline: date | None = None
+    deadline: Optional[dt_date] = None
     status: Literal["active", "done", "archived"]
     created_at: str
 
@@ -48,7 +50,7 @@ class GoalAdjustRequest(BaseModel):
     account_id: str
     delta: int
     note: str | None = None
-    date: date | None = None
+    date: Optional[dt_date] = None
 
 
 @router.get("/goals")
