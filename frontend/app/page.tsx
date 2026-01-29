@@ -1429,6 +1429,7 @@ export default function HomePage() {
                 reconcileDiffAbs={reconcileDiffAbs}
                 reconcileDiff={reconcileDiff}
                 reconcileAccountId={reconcileAccountId}
+                reconcileErrorDetails={reconcileErrorDetails}
                 onReconcileAccountChange={setReconcileAccountId}
                 onReconcileAdjust={handleReconcileAdjust}
                 accounts={accounts}
@@ -1697,6 +1698,7 @@ type DayTabProps = {
   reconcileDiffAbs: number;
   reconcileDiff: number;
   reconcileAccountId: string;
+  reconcileErrorDetails: FormErrorDetails | null;
   onReconcileAccountChange: (value: string) => void;
   onReconcileAdjust: () => void;
   accounts: Account[];
@@ -1719,6 +1721,7 @@ const DayTab = ({
   reconcileDiffAbs,
   reconcileDiff,
   reconcileAccountId,
+  reconcileErrorDetails,
   onReconcileAccountChange,
   onReconcileAdjust,
   accounts,
