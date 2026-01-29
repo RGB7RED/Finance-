@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Any
 
@@ -8,6 +9,9 @@ from postgrest.exceptions import APIError
 
 from app.integrations.supabase_client import get_supabase_client
 from app.repositories.accounts import list_accounts
+
+
+logger = logging.getLogger(__name__)
 
 
 MANUAL_ADJUST_REASON = "manual_adjust"
@@ -250,6 +254,12 @@ def create_balance_event(
             .execute()
         )
     except APIError as exc:
+        logger.error(
+            "Failed to insert account balance event: code=%s message=%s details=%s",
+            getattr(exc, "code", None),
+            getattr(exc, "message", None),
+            getattr(exc, "details", None),
+        )
         _raise_postgrest_http_error(exc)
     data = response.data or []
     if not data:
