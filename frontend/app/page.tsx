@@ -95,6 +95,24 @@ const buildErrorMessage = (fallback: string, error: unknown): string => {
   return fallback;
 };
 
+const extractErrorDetail = (responseText?: string): string | null => {
+  if (!responseText) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(responseText) as { detail?: string } | string;
+    if (typeof parsed === "string") {
+      return parsed;
+    }
+    if (parsed && typeof parsed === "object" && parsed.detail) {
+      return parsed.detail;
+    }
+  } catch (error) {
+    return responseText;
+  }
+  return responseText;
+};
+
 const getDefaultReportRange = (): { from: string; to: string } => {
   const today = new Date();
   const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -1248,12 +1266,18 @@ export default function HomePage() {
     }
     setMessage("");
     try {
-      await adjustGoal(token, goalId, {
+      const result = await adjustGoal(token, goalId, {
         budget_id: activeBudgetId,
         account_id: goalAccountId,
         delta,
         date: selectedDate,
       });
+      if (result.status === "noop") {
+        const updatedGoals = await listGoals(token, activeBudgetId);
+        setGoals(updatedGoals);
+        setMessage("Цель уже достигнута");
+        return;
+      }
       const [updatedGoals, updatedTransactions] = await Promise.all([
         listGoals(token, activeBudgetId),
         listTransactions(token, activeBudgetId, selectedDate),
@@ -1262,7 +1286,11 @@ export default function HomePage() {
       setTransactions(updatedTransactions);
       await loadDailyStateData(token, activeBudgetId, selectedDate);
     } catch (error) {
-      setMessage(buildErrorMessage("Не удалось обновить цель", error));
+      const apiError = error as Error & { text?: string };
+      const detail = extractErrorDetail(apiError.text);
+      setMessage(
+        detail ?? buildErrorMessage("Не удалось обновить цель", error),
+      );
     }
   };
 
@@ -2130,6 +2158,8 @@ export default function HomePage() {
                   const remaining = normalizeGoalRemaining(goal);
                   const strategy = getGoalStrategy(goal);
                   const isActive = goal.status === "active";
+                  const isReached =
+                    goal.current_amount >= goal.target_amount;
                   const canWithdraw100 = goal.current_amount >= 100;
                   const canWithdraw500 = goal.current_amount >= 500;
                   const canWithdraw1000 = goal.current_amount >= 1000;
@@ -2157,24 +2187,25 @@ export default function HomePage() {
                         <button
                           type="button"
                           onClick={() => handleGoalAdjust(goal.id, 100)}
-                          disabled={!isActive}
+                          disabled={!isActive || isReached}
                         >
                           +100
                         </button>
                         <button
                           type="button"
                           onClick={() => handleGoalAdjust(goal.id, 500)}
-                          disabled={!isActive}
+                          disabled={!isActive || isReached}
                         >
                           +500
                         </button>
                         <button
                           type="button"
                           onClick={() => handleGoalAdjust(goal.id, 1000)}
-                          disabled={!isActive}
+                          disabled={!isActive || isReached}
                         >
                           +1000
                         </button>
+                        {isReached && <span>Цель достигнута</span>}
                         <button
                           type="button"
                           onClick={() => handleGoalAdjust(goal.id, -100)}
