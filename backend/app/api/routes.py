@@ -445,6 +445,12 @@ def put_daily_state(
         payload.budget_id,
         payload.date,
     )
+    logger.info(
+        "daily_state_update debts_received date=%s credit_cards=%s people_debts=%s",
+        payload.date,
+        payload.debts.credit_cards if payload.debts else None,
+        payload.debts.people_debts if payload.debts else None,
+    )
     if not payload.accounts:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

@@ -126,6 +126,10 @@ export default function HomePage() {
     debt_cards_total: "",
     debt_other_total: "",
   });
+  const [debtsDirty, setDebtsDirty] = useState({
+    creditCards: false,
+    peopleDebts: false,
+  });
   const [dailyStateAccounts, setDailyStateAccounts] = useState<
     (DailyStateAccount & { amountText: string; amount: number })[]
   >([]);
@@ -216,6 +220,7 @@ export default function HomePage() {
       debt_cards_total: String(state.debts?.credit_cards ?? 0),
       debt_other_total: String(state.debts?.people_debts ?? 0),
     });
+    setDebtsDirty({ creditCards: false, peopleDebts: false });
     setDailyStateAccounts(
       state.accounts.map((account) => ({
         ...account,
@@ -246,19 +251,22 @@ export default function HomePage() {
   };
 
   const buildDebtsPayload = () => {
+    if (!debtsDirty.creditCards && !debtsDirty.peopleDebts) {
+      return undefined;
+    }
     const creditCards = parseAmountOrNull(dailyStateForm.debt_cards_total);
     const peopleDebts = parseAmountOrNull(dailyStateForm.debt_other_total);
     if (creditCards === null && peopleDebts === null) {
       return undefined;
     }
     const debts: { credit_cards?: number; people_debts?: number } = {};
-    if (creditCards !== null) {
+    if (debtsDirty.creditCards && creditCards !== null) {
       debts.credit_cards = creditCards;
     }
-    if (peopleDebts !== null) {
+    if (debtsDirty.peopleDebts && peopleDebts !== null) {
       debts.people_debts = peopleDebts;
     }
-    return debts;
+    return Object.keys(debts).length ? debts : undefined;
   };
 
   const getAccountCurrentValue = (
@@ -1256,6 +1264,11 @@ export default function HomePage() {
       return;
     }
     setDailyStateForm((prev) => ({ ...prev, [field]: value }));
+    setDebtsDirty((prev) => ({
+      ...prev,
+      ...(field === "debt_cards_total" ? { creditCards: true } : {}),
+      ...(field === "debt_other_total" ? { peopleDebts: true } : {}),
+    }));
   };
 
   const handleDailyStateAccountChange = (
