@@ -128,7 +128,7 @@ export default function HomePage() {
     debt_other_total: "",
   });
   const [dailyStateAccounts, setDailyStateAccounts] = useState<
-    (DailyStateAccount & { amountText: string })[]
+    (DailyStateAccount & { amountText: string; amount: number })[]
   >([]);
   const [accountName, setAccountName] = useState("");
   const [accountKind, setAccountKind] = useState("cash");
@@ -220,31 +220,44 @@ export default function HomePage() {
     setDailyStateAccounts(
       state.accounts.map((account) => ({
         ...account,
+        amount: account.amount ?? 0,
         amountText: String(account.amount ?? 0),
       })),
     );
   };
 
-  const parseAmount = (value: string): number => {
-    const parsed = Number.parseInt(value, 10);
-    return Number.isFinite(parsed) ? parsed : 0;
-  };
-
-  const parseAmountOrNull = (value: string): number | null => {
-    const trimmed = value.trim();
-    if (!trimmed) {
+  const parseAmountFromText = (value: string): number | null => {
+    const normalized = value.replace(/[\s\u00a0]/g, "").replace(/[^\d-]+/g, "");
+    const match = normalized.match(/-?\d+/);
+    if (!match) {
       return null;
     }
-    const parsed = Number.parseInt(trimmed, 10);
+    const parsed = Number.parseInt(match[0], 10);
     return Number.isFinite(parsed) ? parsed : null;
   };
 
-  const getAccountCurrentValue = (
-    account: DailyStateAccount & { amountText: string },
-  ): number => {
-    const parsedTextValue = parseAmountOrNull(account.amountText);
-    return parsedTextValue ?? account.amount ?? 0;
+  const parseAmount = (value: string): number =>
+    parseAmountFromText(value) ?? 0;
+
+  const parseAmountOrNull = (value: string): number | null => {
+    if (!value.trim()) {
+      return null;
+    }
+    return parseAmountFromText(value);
   };
+
+  const getAccountCurrentValue = (
+    account: DailyStateAccount & { amountText: string; amount: number },
+  ): number => {
+    return account.amount ?? 0;
+  };
+
+  const buildQuickAdjustInsufficientMessage = (
+    currentValue: number,
+    delta: number,
+    nextValue: number,
+  ) =>
+    `Недостаточно средств: текущий остаток ${currentValue} ₽, нужно изменить на ${delta} ₽, получится ${nextValue} ₽`;
 
   const loadDailyStateData = async (
     authToken: string,
@@ -1339,7 +1352,8 @@ export default function HomePage() {
     field: keyof typeof dailyStateForm,
     value: string,
   ) => {
-    if (Number.parseInt(value, 10) < 0) {
+    const parsedValue = parseAmountOrNull(value);
+    if (parsedValue !== null && parsedValue < 0) {
       return;
     }
     setDailyStateForm((prev) => ({ ...prev, [field]: value }));
@@ -1349,19 +1363,16 @@ export default function HomePage() {
     accountId: string,
     value: string,
   ) => {
-    if (Number.parseInt(value, 10) < 0) {
+    const parsedValue = parseAmountOrNull(value);
+    if (parsedValue !== null && parsedValue < 0) {
       return;
     }
-    const parsedValue = Number.parseInt(value, 10);
     setDailyStateAccounts((prev) =>
       prev.map((account) =>
         account.account_id === accountId
           ? {
               ...account,
               amountText: value,
-              amount: Number.isFinite(parsedValue)
-                ? parsedValue
-                : account.amount,
             }
           : account,
       ),
@@ -1431,19 +1442,21 @@ export default function HomePage() {
       setQuickAdjustError("missing budget/date/account");
       return;
     }
-    const parsedTextValue = parseAmountOrNull(currentAccount.amountText);
-    const currentValue = parsedTextValue ?? currentAccount.amount ?? 0;
+    const currentValue = currentAccount.amount ?? 0;
     const nextValue = currentValue + delta;
     if (nextValue < 0) {
+      const message = buildQuickAdjustInsufficientMessage(
+        currentValue,
+        delta,
+        nextValue,
+      );
       console.log("[quick-adjust] guard: nextValue < 0", {
         currentValue,
         nextValue,
         delta,
       });
       setQuickAdjustErrorDetails(null);
-      setQuickAdjustError(
-        "Недостаточно средств на счете для корректировки, выберите другой счет / измените счет",
-      );
+      setQuickAdjustError(message);
       return;
     }
     const updatedAccounts = dailyStateAccounts.map((account) =>
@@ -2270,6 +2283,12 @@ export default function HomePage() {
                                   getAccountCurrentValue(account);
                                 const nextValue = currentValue + deltaToApply;
                                 const isInsufficient = nextValue < 0;
+                                const insufficientMessage =
+                                  buildQuickAdjustInsufficientMessage(
+                                    currentValue,
+                                    deltaToApply,
+                                    nextValue,
+                                  );
                                 return (
                                   <>
                                     <button
@@ -2285,7 +2304,7 @@ export default function HomePage() {
                                       }
                                       title={
                                         isInsufficient
-                                          ? "Недостаточно средств на счете для корректировки"
+                                          ? insufficientMessage
                                           : undefined
                                       }
                                     >
@@ -2294,11 +2313,7 @@ export default function HomePage() {
                                         : `Изменить ${account.name} на ${deltaToApply} ₽`}
                                     </button>
                                     {isInsufficient && (
-                                      <p>
-                                        Недостаточно средств на счете для
-                                        корректировки, выберите другой счет /
-                                        измените счет
-                                      </p>
+                                      <p>{insufficientMessage}</p>
                                     )}
                                   </>
                                 );
