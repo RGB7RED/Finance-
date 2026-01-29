@@ -23,7 +23,6 @@ from app.repositories.account_balance_events import (
 )
 from app.repositories.daily_state import (
     get_balance_for_date,
-    get_debts,
     get_debts_as_of,
     get_delta,
     upsert_debts,
@@ -403,7 +402,9 @@ def post_debts_other(
             detail="Недостаточно средств для операции",
         )
 
-    debts_record = get_debts(current_user["sub"], payload.budget_id, target_date)
+    debts_record = get_debts_as_of(
+        current_user["sub"], payload.budget_id, target_date
+    )
     debt_other_total = int(debts_record.get("debt_other_total", 0)) + (
         payload.amount if payload.direction == "borrowed" else -payload.amount
     )
