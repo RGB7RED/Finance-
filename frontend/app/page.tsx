@@ -36,6 +36,7 @@ import {
   createTransaction,
   deleteRule,
   deleteGoal,
+  adjustGoal,
   deleteTransaction,
   ensureDefaultBudgets,
   getDailyState,
@@ -189,6 +190,7 @@ export default function HomePage() {
     "borrowed" | "repaid"
   >("borrowed");
   const [debtOtherAccountId, setDebtOtherAccountId] = useState("");
+  const [goalAccountId, setGoalAccountId] = useState("");
   const [goalTitle, setGoalTitle] = useState("");
   const [goalTargetAmount, setGoalTargetAmount] = useState("");
   const [goalDeadline, setGoalDeadline] = useState("");
@@ -605,6 +607,31 @@ export default function HomePage() {
     }
   }, [accounts, debtOtherAccountId]);
 
+  useEffect(() => {
+    if (!activeBudgetId || !accounts.length) {
+      setGoalAccountId("");
+      return;
+    }
+    const storageKey = `mf_goals_account_id_${activeBudgetId}`;
+    const saved = localStorage.getItem(storageKey);
+    const hasSaved =
+      saved && accounts.some((account) => account.id === saved);
+    setGoalAccountId((prev) => {
+      if (prev && accounts.some((account) => account.id === prev)) {
+        return prev;
+      }
+      return hasSaved ? (saved as string) : accounts[0].id;
+    });
+  }, [accounts, activeBudgetId]);
+
+  useEffect(() => {
+    if (!activeBudgetId || !goalAccountId) {
+      return;
+    }
+    const storageKey = `mf_goals_account_id_${activeBudgetId}`;
+    localStorage.setItem(storageKey, goalAccountId);
+  }, [activeBudgetId, goalAccountId]);
+
   const getTagLabel = (tag: "one_time" | "subscription" | null | undefined) =>
     tag === "subscription" ? "Подписка" : tag === "one_time" ? "Разовый" : "";
 
@@ -619,6 +646,9 @@ export default function HomePage() {
 
   const dailyTotal = useMemo(() => {
     return transactions.reduce((total, tx) => {
+      if (tx.kind !== "normal") {
+        return total;
+      }
       if (tx.type === "income") {
         return total + tx.amount;
       }
@@ -1208,20 +1238,29 @@ export default function HomePage() {
     }
   };
 
-  const handleGoalQuickAdd = async (goalId: string, delta: number) => {
+  const handleGoalAdjust = async (goalId: string, delta: number) => {
     if (!token || !activeBudgetId) {
       return;
     }
-    const goal = goals.find((item) => item.id === goalId);
-    if (!goal) {
+    if (!goalAccountId) {
+      setMessage("Выберите счет для цели");
       return;
     }
-    const nextAmount = goal.current_amount + delta;
     setMessage("");
     try {
-      await updateGoal(token, goalId, { current_amount: nextAmount });
-      const updatedGoals = await listGoals(token, activeBudgetId);
+      await adjustGoal(token, goalId, {
+        budget_id: activeBudgetId,
+        account_id: goalAccountId,
+        delta,
+        date: selectedDate,
+      });
+      const [updatedGoals, updatedTransactions] = await Promise.all([
+        listGoals(token, activeBudgetId),
+        listTransactions(token, activeBudgetId, selectedDate),
+      ]);
       setGoals(updatedGoals);
+      setTransactions(updatedTransactions);
+      await loadDailyStateData(token, activeBudgetId, selectedDate);
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось обновить цель", error));
     }
@@ -1238,6 +1277,20 @@ export default function HomePage() {
       setGoals(updatedGoals);
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось закрыть цель", error));
+    }
+  };
+
+  const handleGoalArchive = async (goalId: string) => {
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    setMessage("");
+    try {
+      await updateGoal(token, goalId, { status: "archived" });
+      const updatedGoals = await listGoals(token, activeBudgetId);
+      setGoals(updatedGoals);
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось архивировать цель", error));
     }
   };
 
@@ -2054,12 +2107,32 @@ export default function HomePage() {
 
           <section>
             <h2>Цели</h2>
+            {accounts.length ? (
+              <label>
+                Счет для цели:
+                <select
+                  value={goalAccountId}
+                  onChange={(event) => setGoalAccountId(event.target.value)}
+                >
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <p>Добавьте счет, чтобы пополнять цели.</p>
+            )}
             {goals.length ? (
               <ul>
                 {goals.map((goal) => {
                   const remaining = normalizeGoalRemaining(goal);
                   const strategy = getGoalStrategy(goal);
                   const isActive = goal.status === "active";
+                  const canWithdraw100 = goal.current_amount >= 100;
+                  const canWithdraw500 = goal.current_amount >= 500;
+                  const canWithdraw1000 = goal.current_amount >= 1000;
                   return (
                     <li key={goal.id}>
                       <div>
@@ -2083,24 +2156,45 @@ export default function HomePage() {
                       <div>
                         <button
                           type="button"
-                          onClick={() => handleGoalQuickAdd(goal.id, 100)}
+                          onClick={() => handleGoalAdjust(goal.id, 100)}
                           disabled={!isActive}
                         >
                           +100
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleGoalQuickAdd(goal.id, 500)}
+                          onClick={() => handleGoalAdjust(goal.id, 500)}
                           disabled={!isActive}
                         >
                           +500
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleGoalQuickAdd(goal.id, 1000)}
+                          onClick={() => handleGoalAdjust(goal.id, 1000)}
                           disabled={!isActive}
                         >
                           +1000
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleGoalAdjust(goal.id, -100)}
+                          disabled={!isActive || !canWithdraw100}
+                        >
+                          -100
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleGoalAdjust(goal.id, -500)}
+                          disabled={!isActive || !canWithdraw500}
+                        >
+                          -500
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleGoalAdjust(goal.id, -1000)}
+                          disabled={!isActive || !canWithdraw1000}
+                        >
+                          -1000
                         </button>
                         <button
                           type="button"
@@ -2108,6 +2202,13 @@ export default function HomePage() {
                           disabled={!isActive}
                         >
                           Закрыть
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleGoalArchive(goal.id)}
+                          disabled={goal.status === "archived"}
+                        >
+                          Архивировать
                         </button>
                         <button
                           type="button"
@@ -2177,22 +2278,36 @@ export default function HomePage() {
                         (tx.to_account_id &&
                           accountMap.get(tx.to_account_id)?.name) ||
                         "Счет";
+                      const goalTitle =
+                        (tx.goal_id &&
+                          goals.find((goal) => goal.id === tx.goal_id)?.title) ||
+                        null;
                       const categoryName =
                         (tx.category_id &&
                           categories.find((cat) => cat.id === tx.category_id)
                             ?.name) ||
                         null;
+                      const isGoalTransfer = tx.kind === "goal_transfer";
                       return (
                         <li key={tx.id}>
                           <div>
-                            <strong>{tx.type}</strong>: {tx.amount} ₽{" "}
+                            <strong>
+                              {isGoalTransfer ? "goal_transfer" : tx.type}
+                            </strong>
+                            : {tx.amount} ₽{" "}
                             {tx.type === "transfer" && (
                               <span>
                                 {accountName} → {toAccountName}
                               </span>
                             )}
                             {tx.type !== "transfer" && <span>{accountName}</span>}
-                            {tx.type === "expense" && (
+                            {isGoalTransfer && (
+                              <span>
+                                {" "}
+                                (Цель: {goalTitle ?? "—"})
+                              </span>
+                            )}
+                            {tx.type === "expense" && !isGoalTransfer && (
                               <span>
                                 {" "}
                                 {categoryName

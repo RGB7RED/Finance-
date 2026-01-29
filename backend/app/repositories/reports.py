@@ -51,9 +51,10 @@ def cashflow_by_day(
     client = get_supabase_client()
     response = (
         client.table("transactions")
-        .select("date, type, amount")
+        .select("date, type, amount, kind")
         .eq("budget_id", budget_id)
         .eq("user_id", user_id)
+        .eq("kind", "normal")
         .gte("date", date_from.isoformat())
         .lte("date", date_to.isoformat())
         .order("date")
@@ -228,9 +229,10 @@ def reconcile_by_date(
     client = get_supabase_client()
     response = (
         client.table("transactions")
-        .select("type, amount")
+        .select("type, amount, kind")
         .eq("budget_id", budget_id)
         .eq("user_id", user_id)
+        .eq("kind", "normal")
         .eq("date", target_date.isoformat())
         .execute()
     )
@@ -279,9 +281,10 @@ def month_report(user_id: str, budget_id: str, month: str) -> dict[str, Any]:
 
     cashflow_response = (
         client.table("transactions")
-        .select("date, type, amount")
+        .select("date, type, amount, kind")
         .eq("budget_id", budget_id)
         .eq("user_id", user_id)
+        .eq("kind", "normal")
         .gte("date", date_from.isoformat())
         .lt("date", date_to.isoformat())
         .order("date")
@@ -444,10 +447,11 @@ def expenses_by_category(
     client = get_supabase_client()
     transactions_response = (
         client.table("transactions")
-        .select("amount, category_id")
+        .select("amount, category_id, kind")
         .eq("type", "expense")
         .eq("budget_id", budget_id)
         .eq("user_id", user_id)
+        .eq("kind", "normal")
         .gte("date", date_from.isoformat())
         .lte("date", date_to.isoformat())
         .execute()

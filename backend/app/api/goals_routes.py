@@ -5,7 +5,13 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.auth.jwt import get_current_user
-from app.repositories.goals import create_goal, delete_goal, list_goals, update_goal
+from app.repositories.goals import (
+    adjust_goal_amount,
+    create_goal,
+    delete_goal,
+    list_goals,
+    update_goal,
+)
 
 router = APIRouter()
 
@@ -35,6 +41,14 @@ class GoalOut(BaseModel):
     deadline: date | None = None
     status: Literal["active", "done", "archived"]
     created_at: str
+
+
+class GoalAdjustRequest(BaseModel):
+    budget_id: str
+    account_id: str
+    delta: int
+    note: str | None = None
+    date: date | None = None
 
 
 @router.get("/goals")
@@ -67,6 +81,24 @@ def patch_goals(
     fields = payload.model_dump(mode="json", exclude_none=True)
     record = update_goal(current_user["sub"], goal_id, fields)
     return GoalOut(**record)
+
+
+@router.post("/goals/{goal_id}/adjust")
+def adjust_goal(
+    goal_id: str,
+    payload: GoalAdjustRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, dict]:
+    result = adjust_goal_amount(
+        current_user["sub"],
+        goal_id,
+        payload.budget_id,
+        payload.account_id,
+        payload.delta,
+        payload.note,
+        payload.date,
+    )
+    return result
 
 
 @router.delete("/goals/{goal_id}")

@@ -157,10 +157,12 @@ export type Transaction = {
   user_id: string;
   date: string;
   type: "income" | "expense" | "transfer";
+  kind: "normal" | "transfer" | "goal_transfer";
   amount: number;
   account_id: string | null;
   to_account_id: string | null;
   category_id: string | null;
+  goal_id: string | null;
   tag: "one_time" | "subscription";
   note: string | null;
   created_at: string;
@@ -749,6 +751,43 @@ export const updateGoal = async (
   }
 
   return (await response.json()) as Goal;
+};
+
+export const adjustGoal = async (
+  token: string,
+  id: string,
+  payload: {
+    budget_id: string;
+    account_id: string;
+    delta: number;
+    note?: string | null;
+    date?: string | null;
+  },
+): Promise<{ goal: Goal; transaction: Transaction }> => {
+  if (!API_BASE_URL) {
+    throw buildError("API недоступен");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/goals/${id}/adjust`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(token),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw buildError("API недоступен");
+  }
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw buildError("Request failed", response.status, responseText);
+  }
+
+  return (await response.json()) as { goal: Goal; transaction: Transaction };
 };
 
 export const deleteGoal = async (

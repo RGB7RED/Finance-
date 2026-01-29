@@ -68,11 +68,13 @@ class CategoryCreateRequest(BaseModel):
 class TransactionCreate(BaseModel):
     budget_id: str
     type: Literal["income", "expense", "transfer"]
+    kind: Literal["normal", "transfer", "goal_transfer"] | None = None
     amount: int = Field(gt=0)
     date: dt.date
     account_id: str | None = None
     to_account_id: str | None = None
     category_id: str | None = None
+    goal_id: str | None = None
     tag: Literal["one_time", "subscription"]
     note: str | None = None
 
@@ -83,10 +85,12 @@ class TransactionOut(BaseModel):
     user_id: str
     date: dt.date
     type: Literal["income", "expense", "transfer"]
+    kind: Literal["normal", "transfer", "goal_transfer"]
     amount: int
     account_id: str | None = None
     to_account_id: str | None = None
     category_id: str | None = None
+    goal_id: str | None = None
     tag: Literal["one_time", "subscription"]
     note: str | None = None
     created_at: str
