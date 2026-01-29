@@ -11,6 +11,7 @@ from app.integrations.supabase_client import get_supabase_client
 from app.repositories.account_balance_events import (
     GOAL_TRANSFER_REASON,
     TRANSFER_REASON,
+    TRANSACTION_REASON,
     create_balance_event,
 )
 
@@ -280,9 +281,32 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             detail=detail,
         ) from exc
     data = response.data or []
-    if data:
-        return data[0]
-    raise RuntimeError("Failed to create transaction in Supabase")
+    if not data:
+        raise RuntimeError("Failed to create transaction in Supabase")
+    transaction = data[0]
+    if tx_type in ("income", "expense"):
+        target_date = _parse_payload_date(payload.get("date"))
+        amount = int(payload.get("amount", 0))
+        delta = amount if tx_type == "income" else -amount
+        try:
+            create_balance_event(
+                user_id,
+                budget_id,
+                target_date,
+                account_id,
+                delta,
+                TRANSACTION_REASON,
+                transaction_id=transaction.get("id"),
+            )
+        except HTTPException:
+            try:
+                client.table("transactions").delete().eq(
+                    "id", transaction.get("id")
+                ).execute()
+            except Exception:
+                pass
+            raise
+    return transaction
 
 
 def delete_transaction(user_id: str, tx_id: str) -> None:

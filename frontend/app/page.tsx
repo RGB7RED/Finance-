@@ -468,7 +468,7 @@ export default function HomePage() {
           loadedGoals,
           loadedRules,
         ] = await Promise.all([
-          listAccounts(resolvedToken, nextBudgetId, selectedDate),
+          listAccounts(resolvedToken, nextBudgetId),
           listCategories(resolvedToken, nextBudgetId),
           listTransactions(resolvedToken, nextBudgetId, selectedDate),
           listGoals(resolvedToken, nextBudgetId),
@@ -672,6 +672,40 @@ export default function HomePage() {
   const bottomDayTotal = reconcileSummary?.bottom_total ?? dailyTotal;
   const reconcileDiff = reconcileSummary?.diff ?? 0;
   const reconcileDiffAbs = Math.abs(reconcileDiff);
+  const reconcileDelta = bottomDayTotal - topDayTotal;
+  const reconcileDeltaAbs = Math.abs(reconcileDelta);
+  const reconcileEligibleAccountIds = useMemo(() => {
+    if (reconcileDelta >= 0) {
+      return new Set(accounts.map((account) => account.id));
+    }
+    const eligible = new Set<string>();
+    dailyState?.accounts.forEach((account) => {
+      if (account.amount >= reconcileDeltaAbs) {
+        eligible.add(account.account_id);
+      }
+    });
+    return eligible;
+  }, [accounts, dailyState, reconcileDelta, reconcileDeltaAbs]);
+  const reconcileHasEligibleAccounts =
+    reconcileDelta >= 0
+      ? accounts.length > 0
+      : reconcileEligibleAccountIds.size > 0;
+  const reconcileCanAdjust = Boolean(
+    reconcileAccountId &&
+      (reconcileDelta >= 0 ||
+        reconcileEligibleAccountIds.has(reconcileAccountId)),
+  );
+  const reconcileHint =
+    reconcileDelta < 0 &&
+    reconcileAccountId &&
+    !reconcileEligibleAccountIds.has(reconcileAccountId)
+      ? "На этом счёте недостаточно средств для корректировки"
+      : reconcileDelta < 0 && !reconcileHasEligibleAccounts
+        ? "На выбранную дату нет счёта с достаточным остатком"
+        : null;
+  const reconcileErrorDetail = reconcileErrorDetails
+    ? extractErrorDetail(reconcileErrorDetails.responseText)
+    : null;
   const renderMonthReconcileStatus = (diff: number) => {
     if (Math.abs(diff) <= 1) {
       return <Pill variant="ok" text="OK" />;
@@ -687,6 +721,37 @@ export default function HomePage() {
   const monthNetTotal = monthReport?.month_net ?? 0;
   const monthAvgNet = monthReport?.avg_net_per_day ?? 0;
   const hasAccounts = accounts.length > 0;
+  useEffect(() => {
+    if (reconcileDiff === 0) {
+      return;
+    }
+    if (reconcileDelta >= 0) {
+      return;
+    }
+    if (reconcileEligibleAccountIds.size === 0) {
+      if (reconcileAccountId) {
+        setReconcileAccountId("");
+      }
+      return;
+    }
+    if (
+      !reconcileAccountId ||
+      !reconcileEligibleAccountIds.has(reconcileAccountId)
+    ) {
+      const firstEligible = accounts.find((account) =>
+        reconcileEligibleAccountIds.has(account.id),
+      );
+      if (firstEligible && firstEligible.id !== reconcileAccountId) {
+        setReconcileAccountId(firstEligible.id);
+      }
+    }
+  }, [
+    accounts,
+    reconcileAccountId,
+    reconcileDelta,
+    reconcileDiff,
+    reconcileEligibleAccountIds,
+  ]);
 
   const renderCategoryTree = (parentId: string | null) => {
     const key = parentId ?? "root";
@@ -722,7 +787,7 @@ export default function HomePage() {
         loadedGoals,
         loadedRules,
       ] = await Promise.all([
-        listAccounts(token, nextBudgetId, selectedDate),
+        listAccounts(token, nextBudgetId),
         listCategories(token, nextBudgetId),
         listTransactions(token, nextBudgetId, selectedDate),
         listGoals(token, nextBudgetId),
@@ -748,7 +813,7 @@ export default function HomePage() {
       }
       try {
         const [loadedAccounts, loadedTransactions] = await Promise.all([
-          listAccounts(token, activeBudgetId, selectedDate),
+          listAccounts(token, activeBudgetId),
           listTransactions(token, activeBudgetId, selectedDate),
         ]);
         await loadDailyStateData(token, activeBudgetId, selectedDate);
@@ -879,11 +944,7 @@ export default function HomePage() {
       });
       setAccountName("");
       setAccountInitialAmount("0");
-      const updatedAccounts = await listAccounts(
-        token,
-        activeBudgetId,
-        selectedDate,
-      );
+      const updatedAccounts = await listAccounts(token, activeBudgetId);
       setAccounts(updatedAccounts);
       await loadDailyStateData(token, activeBudgetId, selectedDate);
     } catch (error) {
@@ -1140,6 +1201,10 @@ export default function HomePage() {
     if (delta === 0) {
       return;
     }
+    if (delta < 0 && !reconcileEligibleAccountIds.has(reconcileAccountId)) {
+      setMessage("На этом счёте недостаточно средств для корректировки");
+      return;
+    }
     setMessage("");
     setReconcileErrorDetails(null);
     try {
@@ -1188,7 +1253,7 @@ export default function HomePage() {
       });
       setDebtOtherAmount("");
       const [updatedAccounts] = await Promise.all([
-        listAccounts(token, activeBudgetId, selectedDate),
+        listAccounts(token, activeBudgetId),
         loadDailyStateData(token, activeBudgetId, selectedDate),
       ]);
       setAccounts(updatedAccounts);
@@ -1343,7 +1408,7 @@ export default function HomePage() {
         loadedGoals,
         loadedRules,
       ] = await Promise.all([
-        listAccounts(token, activeBudgetId, selectedDate),
+        listAccounts(token, activeBudgetId),
         listCategories(token, activeBudgetId),
         listTransactions(token, activeBudgetId, selectedDate),
         listGoals(token, activeBudgetId),
@@ -1428,8 +1493,13 @@ export default function HomePage() {
                 hasAccounts={hasAccounts}
                 reconcileDiffAbs={reconcileDiffAbs}
                 reconcileDiff={reconcileDiff}
+                reconcileDelta={reconcileDelta}
                 reconcileAccountId={reconcileAccountId}
+                reconcileCanAdjust={reconcileCanAdjust}
+                reconcileEligibleAccountIds={reconcileEligibleAccountIds}
+                reconcileHint={reconcileHint}
                 reconcileErrorDetails={reconcileErrorDetails}
+                reconcileErrorDetail={reconcileErrorDetail}
                 onReconcileAccountChange={setReconcileAccountId}
                 onReconcileAdjust={handleReconcileAdjust}
                 accounts={accounts}
@@ -1697,8 +1767,13 @@ type DayTabProps = {
   hasAccounts: boolean;
   reconcileDiffAbs: number;
   reconcileDiff: number;
+  reconcileDelta: number;
   reconcileAccountId: string;
+  reconcileCanAdjust: boolean;
+  reconcileEligibleAccountIds: Set<string>;
+  reconcileHint: string | null;
   reconcileErrorDetails: FormErrorDetails | null;
+  reconcileErrorDetail: string | null;
   onReconcileAccountChange: (value: string) => void;
   onReconcileAdjust: () => void;
   accounts: Account[];
@@ -1720,8 +1795,13 @@ const DayTab = ({
   hasAccounts,
   reconcileDiffAbs,
   reconcileDiff,
+  reconcileDelta,
   reconcileAccountId,
+  reconcileCanAdjust,
+  reconcileEligibleAccountIds,
+  reconcileHint,
   reconcileErrorDetails,
+  reconcileErrorDetail,
   onReconcileAccountChange,
   onReconcileAdjust,
   accounts,
@@ -1864,7 +1944,14 @@ const DayTab = ({
                   >
                     <option value="">Выберите счет</option>
                     {accounts.map((account) => (
-                      <option key={account.id} value={account.id}>
+                      <option
+                        key={account.id}
+                        value={account.id}
+                        disabled={
+                          reconcileDelta < 0 &&
+                          !reconcileEligibleAccountIds.has(account.id)
+                        }
+                      >
                         {account.name}
                       </option>
                     ))}
@@ -1872,13 +1959,15 @@ const DayTab = ({
                 </label>
                 <Button
                   onClick={onReconcileAdjust}
-                  disabled={!reconcileAccountId}
+                  disabled={!reconcileCanAdjust}
                 >
                   Исправить сверку
                 </Button>
               </div>
+              {reconcileHint && <p className="mf-muted">{reconcileHint}</p>}
               {reconcileErrorDetails && (
                 <div className="mf-stack">
+                  {reconcileErrorDetail && <p>{reconcileErrorDetail}</p>}
                   <p>
                     http_status:{" "}
                     {reconcileErrorDetails.httpStatus ?? "unknown"}
@@ -2838,6 +2927,12 @@ const SettingsTab = ({
           {accounts.map((account) => (
             <li key={account.id}>
               {account.name} ({account.kind})
+              {account.active_from && (
+                <span className="mf-muted">
+                  {" "}
+                  — активен с {account.active_from}
+                </span>
+              )}
             </li>
           ))}
         </ul>

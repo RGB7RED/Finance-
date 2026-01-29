@@ -247,12 +247,17 @@ def reconcile_by_date(
             bottom_total += amount
         elif tx_type == "expense":
             bottom_total -= amount
-    top_total = sum_deltas_for_date(
-        user_id,
-        budget_id,
-        target_date,
-        exclude_reasons=["initial"],
+    current_balance, current_has_data = get_balance_for_date(
+        user_id, budget_id, target_date
     )
+    previous_balance, previous_has_data = get_balance_for_date(
+        user_id, budget_id, target_date - timedelta(days=1)
+    )
+    if not current_has_data:
+        current_balance = 0
+    if not previous_has_data:
+        previous_balance = 0
+    top_total = current_balance - previous_balance
     diff = top_total - bottom_total
     return {
         "date": target_date.isoformat(),
