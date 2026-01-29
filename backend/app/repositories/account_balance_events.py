@@ -37,7 +37,11 @@ def _is_missing_row_error(exc: APIError) -> bool:
 
 
 def _raise_postgrest_http_error(exc: APIError) -> None:
-    detail = getattr(exc, "message", None) or str(exc)
+    message = getattr(exc, "message", None)
+    details = getattr(exc, "details", None)
+    hint = getattr(exc, "hint", None)
+    detail_parts = [part for part in (message, details, hint) if part]
+    detail = " | ".join(detail_parts) if detail_parts else str(exc)
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=detail,
@@ -226,6 +230,7 @@ def create_balance_event(
     account_id: str,
     delta: int,
     reason: str,
+    transaction_id: str | None = None,
 ) -> dict[str, Any]:
     payload = {
         "budget_id": budget_id,
@@ -235,6 +240,8 @@ def create_balance_event(
         "delta": int(delta),
         "reason": reason,
     }
+    if transaction_id is not None:
+        payload["transaction_id"] = transaction_id
     client = get_supabase_client()
     try:
         response = (

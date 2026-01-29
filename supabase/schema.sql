@@ -123,6 +123,7 @@ create table if not exists public.account_balance_events (
     account_id uuid not null references public.accounts(id) on delete cascade,
     delta integer not null,
     reason text not null,
+    transaction_id uuid null references public.transactions(id) on delete cascade,
     created_at timestamptz not null default now()
 );
 
@@ -132,6 +133,10 @@ create index if not exists account_balance_events_budget_user_idx
 create unique index if not exists account_balance_events_manual_unique
     on public.account_balance_events (budget_id, user_id, date, account_id, reason)
     where reason = 'manual_adjust';
+
+create unique index if not exists account_balance_events_tx_unique
+    on public.account_balance_events (transaction_id)
+    where transaction_id is not null;
 
 create table if not exists public.debts_other (
     id uuid primary key default gen_random_uuid(),
