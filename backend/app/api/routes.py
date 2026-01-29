@@ -17,8 +17,10 @@ from app.repositories.budgets import (
 from app.repositories.categories import create_category, list_categories
 from app.repositories.account_balance_events import (
     calculate_totals,
+    create_balance_event,
     get_account_balance_as_of,
     get_balances_as_of,
+    RECONCILE_ADJUST_REASON,
     upsert_manual_adjust_event,
 )
 from app.repositories.daily_state import (
@@ -155,6 +157,14 @@ class DebtOtherOut(BaseModel):
     amount: int
     note: str | None = None
     created_at: str
+
+
+class AccountAdjustRequest(BaseModel):
+    budget_id: str
+    date: dt.date
+    delta: int
+    reason: str | None = None
+    note: str | None = None
 
 
 class RuleCreateRequest(BaseModel):
@@ -329,6 +339,42 @@ def post_accounts(
         payload.active_from,
         payload.initial_amount,
     )
+
+
+@router.post("/accounts/{account_id}/adjust")
+def post_account_adjust(
+    account_id: str,
+    payload: AccountAdjustRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, object]:
+    if payload.reason and payload.reason != RECONCILE_ADJUST_REASON:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid adjust reason",
+        )
+    accounts = list_accounts(
+        current_user["sub"], payload.budget_id, payload.date
+    )
+    allowed_account_ids = {account["id"] for account in accounts}
+    if account_id not in allowed_account_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Счет не найден для бюджета",
+        )
+    create_balance_event(
+        current_user["sub"],
+        payload.budget_id,
+        payload.date,
+        account_id,
+        payload.delta,
+        RECONCILE_ADJUST_REASON,
+    )
+    return {
+        "status": "ok",
+        "applied_delta": payload.delta,
+        "account_id": account_id,
+        "date": payload.date.isoformat(),
+    }
 
 
 @router.get("/categories")

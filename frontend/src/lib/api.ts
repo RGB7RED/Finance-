@@ -384,6 +384,28 @@ export const createAccount = async (
   return (await response.json()) as Account;
 };
 
+export const adjustAccountBalance = async (
+  token: string,
+  accountId: string,
+  payload: {
+    budget_id: string;
+    date: string;
+    delta: number;
+    reason: "reconcile_adjust";
+    note?: string | null;
+  },
+): Promise<{
+  status: "ok";
+  applied_delta: number;
+  account_id: string;
+  date: string;
+}> =>
+  requestJson(`/accounts/${accountId}/adjust`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  });
+
 export const listCategories = async (
   token: string,
   budgetId: string,

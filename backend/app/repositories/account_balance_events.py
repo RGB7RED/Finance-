@@ -74,6 +74,23 @@ def list_balance_events(
     return response.data or []
 
 
+def sum_deltas_for_date(
+    user_id: str,
+    budget_id: str,
+    target_date: date,
+    exclude_reasons: list[str] | None = None,
+) -> int:
+    events = list_balance_events(
+        user_id, budget_id, date_from=target_date, date_to=target_date
+    )
+    exclude = set(exclude_reasons or [])
+    return sum(
+        int(item.get("delta", 0))
+        for item in events
+        if item.get("reason") not in exclude
+    )
+
+
 def get_account_balance_as_of(
     user_id: str, budget_id: str, target_date: date, account_id: str
 ) -> int:
