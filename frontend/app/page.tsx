@@ -9,6 +9,11 @@ import {
   type FormEvent,
 } from "react";
 
+import { Button } from "../src/components/ui/Button";
+import { Card } from "../src/components/ui/Card";
+import { Input } from "../src/components/ui/Input";
+import { Pill } from "../src/components/ui/Pill";
+import { Tabs } from "../src/components/ui/Tabs";
 import {
   type Account,
   type AuthError,
@@ -129,6 +134,9 @@ const getDefaultMonth = (): string =>
 export default function HomePage() {
   const [status, setStatus] = useState<Status>("loading");
   const [viewMode, setViewMode] = useState<"day" | "month">("day");
+  const [activeTab, setActiveTab] = useState<
+    "day" | "ops" | "reports" | "settings"
+  >("day");
   const [token, setTokenState] = useState<string | null>(null);
   const [message, setMessage] = useState<string>("");
   const [budgets, setBudgets] = useState<Budget[]>([]);
@@ -744,9 +752,12 @@ export default function HomePage() {
   const shouldShowQuickAdjust = Math.abs(deltaToApply) > 1;
   const renderMonthReconcileStatus = (diff: number) => {
     if (Math.abs(diff) <= 1) {
-      return "OK";
+      return <Pill variant="ok" text="OK" />;
     }
-    return diff > 0 ? `+${diff} ₽` : `${diff} ₽`;
+    if (diff > 0) {
+      return <Pill variant="warn" text={`+${diff} ₽`} />;
+    }
+    return <Pill variant="err" text={`${diff} ₽`} />;
   };
 
   const monthIncomeTotal = monthReport?.month_income ?? 0;
@@ -1532,1252 +1543,1197 @@ export default function HomePage() {
     }
   };
 
-  return (
-    <main>
-      <h1>Мои финансы</h1>
-      <section>
-        {status === "loading" && <p>Загрузка...</p>}
-        {status === "unauthorized" && (
-          <>
-            {message && <p>{message}</p>}
-            {authErrorDetails && (
-              <div>
-                <p>auth_url: {authErrorDetails.authUrl}</p>
-                <p>error_code: {authErrorDetails.errorCode}</p>
-                <p>initData_length: {authErrorDetails.initDataLength}</p>
-                {authErrorDetails.httpStatus !== undefined && (
-                  <p>http_status: {authErrorDetails.httpStatus}</p>
-                )}
-                {authErrorDetails.responseText && (
-                  <p>response_text: {authErrorDetails.responseText}</p>
-                )}
-              </div>
-            )}
-            <p>Откройте в Telegram Mini App</p>
-          </>
-        )}
-        {status === "error" && (
-          <>
-            {message && <p>{message}</p>}
-            {healthErrorDetails && (
-              <div>
-                <p>API недоступен</p>
-                <p>url: {healthErrorDetails.url}</p>
-              </div>
-            )}
-            {authErrorDetails && !healthErrorDetails && (
-              <div>
-                <p>auth_url: {authErrorDetails.authUrl}</p>
-                <p>error_code: {authErrorDetails.errorCode}</p>
-                <p>initData_length: {authErrorDetails.initDataLength}</p>
-                {authErrorDetails.httpStatus !== undefined && (
-                  <p>http_status: {authErrorDetails.httpStatus}</p>
-                )}
-                {authErrorDetails.responseText && (
-                  <p>response_text: {authErrorDetails.responseText}</p>
-                )}
-              </div>
-            )}
-          </>
-        )}
-        {status === "ready" && message && <p>{message}</p>}
-      </section>
+  const TransactionsCard = ({
+    title,
+    showSummary = false,
+  }: {
+    title: string;
+    showSummary?: boolean;
+  }) => (
+    <Card title={title}>
+      <div className="mf-row">
+        <Input
+          label="Дата"
+          type="date"
+          value={selectedDate}
+          onChange={(event) => setSelectedDate(event.target.value)}
+        />
+      </div>
+      {transactions.length ? (
+        <ul className="mf-list">
+          {transactions.map((tx) => {
+            const accountName =
+              (tx.account_id && accountMap.get(tx.account_id)?.name) || "Счет";
+            const toAccountName =
+              (tx.to_account_id && accountMap.get(tx.to_account_id)?.name) ||
+              "Счет";
+            const goalTitle =
+              (tx.goal_id &&
+                goals.find((goal) => goal.id === tx.goal_id)?.title) ||
+              null;
+            const categoryName =
+              (tx.category_id &&
+                categories.find((cat) => cat.id === tx.category_id)?.name) ||
+              null;
+            const isGoalTransfer = tx.kind === "goal_transfer";
+            return (
+              <li key={tx.id} className="mf-list-item">
+                <div>
+                  <strong>{isGoalTransfer ? "goal_transfer" : tx.type}</strong>:
+                  {` ${tx.amount} ₽ `}
+                  {tx.type === "transfer" && (
+                    <span>
+                      {accountName} → {toAccountName}
+                    </span>
+                  )}
+                  {tx.type !== "transfer" && <span>{accountName}</span>}
+                  {isGoalTransfer && (
+                    <span> (Цель: {goalTitle ?? "—"})</span>
+                  )}
+                  {tx.type === "expense" && !isGoalTransfer && (
+                    <span>
+                      {" "}
+                      {categoryName ? `(${categoryName})` : "(Без категории)"}
+                    </span>
+                  )}
+                  {tx.note && <span> — {tx.note}</span>}
+                </div>
+                <Button
+                  variant="secondary"
+                  className="mf-button--small"
+                  onClick={() => handleDeleteTransaction(tx.id)}
+                >
+                  Удалить
+                </Button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="mf-muted">Нет операций</p>
+      )}
+      {showSummary && (
+        <p className="mf-muted">Итог за день (нижний): {bottomDayTotal} ₽</p>
+      )}
+    </Card>
+  );
 
-      {status === "ready" && (
-        <>
-          <section>
-            <h2>Бюджеты</h2>
-            <label>
-              Активный бюджет:
-              <select
-                value={activeBudgetId ?? ""}
-                onChange={handleBudgetChange}
-              >
-                {budgets.map((budget) => (
-                  <option key={budget.id} value={budget.id}>
-                    {budget.name} ({budget.type})
-                  </option>
-                ))}
-              </select>
-            </label>
-          </section>
-
-          <section>
-            <h2>Режим просмотра</h2>
-            <div>
-              <label>
-                <input
-                  type="radio"
-                  name="view-mode"
-                  value="day"
-                  checked={viewMode === "day"}
-                  onChange={() => setViewMode("day")}
+  const DayTab = () => (
+    <div className="mf-stack">
+      <Card title="Состояние дня (верхняя таблица)">
+        {!hasAccounts ? (
+          <p>Создайте хотя бы один счёт, чтобы вести операции.</p>
+        ) : (
+          <>
+            <div className="mf-row">
+              {dailyStateAccounts.map((account) => (
+                <Input
+                  key={account.account_id}
+                  label={`${account.name} (${account.kind})`}
+                  type="number"
+                  value={account.amountText}
+                  onChange={(event) =>
+                    handleDailyStateAccountChange(
+                      account.account_id,
+                      event.target.value,
+                    )
+                  }
                 />
-                День
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  name="view-mode"
-                  value="month"
-                  checked={viewMode === "month"}
-                  onChange={() => setViewMode("month")}
-                />
-                Месяц
-              </label>
+              ))}
+              <Input
+                label="Кредитки/рассрочки"
+                type="number"
+                value={dailyStateForm.debt_cards_total}
+                onChange={(event) =>
+                  handleDailyStateChange("debt_cards_total", event.target.value)
+                }
+              />
+              <Input
+                label="Долги людям"
+                type="number"
+                value={dailyStateForm.debt_other_total}
+                onChange={(event) =>
+                  handleDailyStateChange("debt_other_total", event.target.value)
+                }
+              />
             </div>
-          </section>
+            <div className="mf-row">
+              <p className="mf-muted">Наличка (авто): {cashTotal} ₽</p>
+              <p className="mf-muted">Безнал (авто): {noncashTotal} ₽</p>
+              <p className="mf-muted">Остаток (авто): {assetsTotal} ₽</p>
+              <p className="mf-muted">Долги: {debtsTotal} ₽</p>
+              <p className="mf-muted">Баланс (авто): {balanceTotal} ₽</p>
+              <p className="mf-muted">Итог за день (верхний): {topDayTotal} ₽</p>
+            </div>
+            <Button onClick={handleSaveDailyState}>
+              Сохранить состояние дня
+            </Button>
+          </>
+        )}
+      </Card>
 
-          <section>
-            <h2>Отчёты</h2>
-            {viewMode === "day" ? (
-              <>
-                <div>
-                  <h3>Быстрые карточки</h3>
-                  <ul>
-                    <li>Остаток: {assetsTotal} ₽</li>
-                    <li>Долги: {debtsTotal} ₽</li>
-                    <li>Баланс: {balanceTotal} ₽</li>
-                    <li>Итог дня (нижний): {bottomDayTotal} ₽</li>
-                    <li>Итог дня (верхний): {topDayTotal} ₽</li>
-                  </ul>
-                </div>
-                <div>
-                  <label>
-                    Период с:
-                    <input
-                      type="date"
-                      value={reportFrom}
-                      onChange={(event) => setReportFrom(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    по:
-                    <input
-                      type="date"
-                      value={reportTo}
-                      onChange={(event) => setReportTo(event.target.value)}
-                    />
-                  </label>
-                </div>
-                <div>
-                  <h3>Доходы/расходы по дням</h3>
-                  {reportCashflow.length ? (
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Дата</th>
-                          <th>Доход</th>
-                          <th>Расход</th>
-                          <th>Итог</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {reportCashflow.map((row) => (
-                          <tr key={row.date}>
-                            <td>{row.date}</td>
-                            <td>{row.income_total} ₽</td>
-                            <td>{row.expense_total} ₽</td>
-                            <td>{row.net_total} ₽</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <p>Нет данных</p>
-                  )}
-                </div>
-                <div>
-                  <h3>Динамика баланса</h3>
-                  {reportBalance.length ? (
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Дата</th>
-                          <th>Остаток</th>
-                          <th>Долги</th>
-                          <th>Баланс</th>
-                          <th>Итог за день</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {reportBalance.map((row) => (
-                          <tr key={row.date}>
-                            <td>{row.date}</td>
-                            <td>{row.assets_total} ₽</td>
-                            <td>{row.debts_total} ₽</td>
-                            <td>{row.balance} ₽</td>
-                            <td>
-                              {row.delta_balance >= 0 ? "+" : ""}
-                              {row.delta_balance} ₽
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <p>Нет данных</p>
-                  )}
-                </div>
-                <div>
-                  <h3>Расходы по категориям</h3>
-                  <label>
-                    Top N:
-                    <select
-                      value={reportExpensesLimit}
-                      onChange={handleReportExpensesLimitChange}
-                    >
-                      <option value={5}>5</option>
-                      <option value={10}>10</option>
-                      <option value={20}>20</option>
-                    </select>
-                  </label>
-                  {reportExpensesByCategory?.items?.length ? (
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Категория</th>
-                          <th>Сумма</th>
-                          <th>Доля %</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {reportExpensesByCategory.items.map((item) => {
-                          const isExpanded =
-                            expandedReportCategories[item.category_id];
-                          return (
-                            <Fragment key={item.category_id}>
-                              <tr>
-                                <td>
-                                  {item.children.length ? (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        toggleReportCategory(item.category_id)
-                                      }
-                                    >
-                                      {isExpanded ? "Свернуть" : "Развернуть"}
-                                    </button>
-                                  ) : null}{" "}
-                                  {item.category_name}
-                                </td>
-                                <td>{item.amount} ₽</td>
-                                <td>
-                                  {(item.share * 100).toFixed(1)}
-                                  %
-                                </td>
-                              </tr>
-                              {isExpanded
-                                ? item.children.map((child) => (
-                                    <tr key={child.category_id}>
-                                      <td>— {child.category_name}</td>
-                                      <td>{child.amount} ₽</td>
-                                      <td>
-                                        {(child.share * 100).toFixed(1)}%
-                                      </td>
-                                    </tr>
-                                  ))
-                                : null}
-                            </Fragment>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <p>Нет данных</p>
-                  )}
-                </div>
-                <div>
-                  <h3>Долги сейчас</h3>
-                  <p>
-                    Кредитки/рассрочки:{" "}
-                    {reportSummary?.debt_cards_total ?? 0} ₽
-                  </p>
-                  <p>Долги людям: {reportSummary?.debt_other_total ?? 0} ₽</p>
-                </div>
-                <div>
-                  <h3>Цели (активные)</h3>
-                  {reportSummary?.goals_active?.length ? (
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Цель</th>
-                          <th>Прогресс</th>
-                          <th>Осталось</th>
-                          <th>Дедлайн</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {reportSummary.goals_active.map((goal, index) => (
-                          <tr key={`${goal.title}-${index}`}>
-                            <td>{goal.title}</td>
-                            <td>
-                              {goal.current} / {goal.target} ₽
-                            </td>
-                            <td>{normalizeReportGoalRemaining(goal)} ₽</td>
-                            <td>{goal.deadline ?? "-"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <p>Нет активных целей</p>
-                  )}
-                </div>
-              </>
+      <Card
+        title="Сверка"
+        right={
+          hasAccounts ? (
+            isReconciledOrClose ? (
+              <Pill variant="ok" text="OK" />
+            ) : (
+              <Pill
+                variant="warn"
+                text={`Расхождение ${reconcileDiffAbs} ₽`}
+              />
+            )
+          ) : null
+        }
+      >
+        {!hasAccounts ? (
+          <p>Сначала добавьте хотя бы один счёт.</p>
+        ) : (
+          <>
+            <p className="mf-faint">
+              lastQuickAdjustClick: {lastQuickAdjustClick || "—"}
+            </p>
+            <p>
+              Верхний итог: {topDayTotal} ₽, Нижний итог: {bottomDayTotal} ₽,
+              Разница: {reconcileDiff} ₽
+            </p>
+            {isReconciledOrClose ? (
+              <p>Сверка: OK</p>
             ) : (
               <>
-                <div>
-                  <h3>Быстрые карточки</h3>
-                  <ul>
-                    <li>Доходы: {monthIncomeTotal} ₽</li>
-                    <li>Расходы: {monthExpenseTotal} ₽</li>
-                    <li>Итог месяца: {monthNetTotal} ₽</li>
-                    <li>Средний итог/день: {monthAvgNet} ₽</li>
-                  </ul>
+                <p>Сверка: расхождение {reconcileDiffAbs} ₽</p>
+                <p>
+                  {reconcileDiff > 1
+                    ? "Остатки больше, чем операции. Нужна корректировка."
+                    : "Остатки меньше, чем операции. Нужна корректировка."}
+                </p>
+                <div className="mf-stack">
+                  {shouldShowQuickAdjust &&
+                    dailyStateAccounts.map((account) => {
+                      const currentValue = getAccountCurrentValue(account);
+                      const nextValue = currentValue + deltaToApply;
+                      const isInsufficient = nextValue < 0;
+                      const insufficientMessage =
+                        buildQuickAdjustInsufficientMessage(
+                          currentValue,
+                          deltaToApply,
+                          nextValue,
+                        );
+                      return (
+                        <div key={account.account_id} className="mf-stack">
+                          <Button
+                            variant="secondary"
+                            onClick={() =>
+                              handleQuickAdjust(
+                                account.account_id,
+                                deltaToApply,
+                              )
+                            }
+                            disabled={isQuickAdjusting || isInsufficient}
+                            title={
+                              isInsufficient ? insufficientMessage : undefined
+                            }
+                          >
+                            {isQuickAdjusting
+                              ? "Применяю…"
+                              : `Изменить ${account.name} на ${deltaToApply} ₽`}
+                          </Button>
+                          {isInsufficient && <p>{insufficientMessage}</p>}
+                        </div>
+                      );
+                    })}
                 </div>
-                <div>
-                  <label>
-                    Месяц:
-                    <input
-                      type="month"
-                      value={selectedMonth}
-                      onChange={(event) => setSelectedMonth(event.target.value)}
-                    />
-                  </label>
-                </div>
-                <div>
-                  <h3>Дни месяца</h3>
-                  {monthReport?.days?.length ? (
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Дата</th>
-                          <th>Верхний итог</th>
-                          <th>Нижний итог</th>
-                          <th>Сверка</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {monthReport.days.map((row: MonthReportDay) => (
-                          <tr key={row.date}>
-                            <td>{row.date}</td>
-                            <td>{row.top_total} ₽</td>
-                            <td>{row.bottom_total} ₽</td>
-                            <td>{renderMonthReconcileStatus(row.diff)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <p>Нет данных</p>
-                  )}
-                </div>
+                {quickAdjustErrorDetails && (
+                  <div>
+                    <p>
+                      http_status:{" "}
+                      {quickAdjustErrorDetails.httpStatus ?? "unknown"}
+                    </p>
+                    <p>
+                      response_text:{" "}
+                      {quickAdjustErrorDetails.responseText ?? "unknown"}
+                    </p>
+                  </div>
+                )}
+                {quickAdjustError && <p>{quickAdjustError}</p>}
               </>
             )}
-          </section>
+          </>
+        )}
+      </Card>
 
-          <section>
-            <h2>Счета</h2>
-            {accounts.length ? (
-              <ul>
-                {accounts.map((account) => (
-                  <li key={account.id}>
-                    {account.name} ({account.kind})
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>Нет счетов</p>
-            )}
-          </section>
+      <TransactionsCard title="Операции за день" showSummary />
+    </div>
+  );
 
-          <section>
-            <h2>Категории</h2>
-            {categories.length ? renderCategoryTree(null) : <p>Нет категорий</p>}
-          </section>
+  const OpsTab = () => (
+    <div className="mf-stack">
+      <Card title="Добавить доход">
+        {!hasAccounts && (
+          <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
+        )}
+        <form className="mf-stack" onSubmit={handleCreateIncome}>
+          <label className="mf-input">
+            <span className="mf-input__label">Счет</span>
+            <select
+              className="mf-select"
+              value={incomeAccountId}
+              onChange={(event) => setIncomeAccountId(event.target.value)}
+              required
+              disabled={!hasAccounts}
+            >
+              <option value="">Выберите счет</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Input
+            label="Сумма"
+            type="number"
+            value={incomeAmount}
+            onChange={(event) => setIncomeAmount(event.target.value)}
+            required
+            disabled={!hasAccounts}
+          />
+          <label className="mf-input">
+            <span className="mf-input__label">Тег</span>
+            <select
+              className="mf-select"
+              value={incomeTag}
+              onChange={(event) =>
+                setIncomeTag(
+                  event.target.value as "one_time" | "subscription",
+                )
+              }
+              disabled={!hasAccounts}
+            >
+              <option value="one_time">Разовый</option>
+              <option value="subscription">Подписка</option>
+            </select>
+          </label>
+          <Input
+            label="Заметка"
+            type="text"
+            value={incomeNote}
+            onChange={(event) => setIncomeNote(event.target.value)}
+            disabled={!hasAccounts}
+          />
+          <Button type="submit" disabled={!hasAccounts}>
+            Добавить
+          </Button>
+        </form>
+        {incomeErrorDetails && (
+          <div>
+            <p>tx_http_status: {incomeErrorDetails.httpStatus ?? "unknown"}</p>
+            <p>
+              tx_response_text: {incomeErrorDetails.responseText ?? "unknown"}
+            </p>
+          </div>
+        )}
+      </Card>
 
-          <section>
-            <h2>Мои правила</h2>
-            {rules.length ? (
-              <table>
+      <Card title="Добавить расход">
+        {!hasAccounts && (
+          <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
+        )}
+        <form className="mf-stack" onSubmit={handleCreateExpense}>
+          <label className="mf-input">
+            <span className="mf-input__label">Счет</span>
+            <select
+              className="mf-select"
+              value={expenseAccountId}
+              onChange={(event) => setExpenseAccountId(event.target.value)}
+              required
+              disabled={!hasAccounts}
+            >
+              <option value="">Выберите счет</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Input
+            label="Сумма"
+            type="number"
+            value={expenseAmount}
+            onChange={(event) => setExpenseAmount(event.target.value)}
+            required
+            disabled={!hasAccounts}
+          />
+          <label className="mf-input">
+            <span className="mf-input__label">Категория</span>
+            <select
+              className="mf-select"
+              value={expenseCategoryId}
+              onChange={(event) => setExpenseCategoryId(event.target.value)}
+              disabled={!hasAccounts}
+            >
+              <option value="">Без категории</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="mf-input">
+            <span className="mf-input__label">Тег</span>
+            <select
+              className="mf-select"
+              value={expenseTag}
+              onChange={(event) =>
+                setExpenseTag(
+                  event.target.value as "one_time" | "subscription",
+                )
+              }
+              disabled={!hasAccounts}
+            >
+              <option value="one_time">Разовый</option>
+              <option value="subscription">Подписка</option>
+            </select>
+          </label>
+          <Input
+            label="Заметка"
+            type="text"
+            value={expenseNote}
+            onChange={(event) => setExpenseNote(event.target.value)}
+            disabled={!hasAccounts}
+          />
+          <Button type="submit" disabled={!hasAccounts}>
+            Добавить
+          </Button>
+        </form>
+        {expenseErrorDetails && (
+          <div>
+            <p>tx_http_status: {expenseErrorDetails.httpStatus ?? "unknown"}</p>
+            <p>
+              tx_response_text: {expenseErrorDetails.responseText ?? "unknown"}
+            </p>
+          </div>
+        )}
+      </Card>
+
+      <Card title="Добавить перевод">
+        {!hasAccounts && (
+          <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
+        )}
+        <form className="mf-stack" onSubmit={handleCreateTransfer}>
+          <label className="mf-input">
+            <span className="mf-input__label">Откуда</span>
+            <select
+              className="mf-select"
+              value={transferFromAccountId}
+              onChange={(event) =>
+                setTransferFromAccountId(event.target.value)
+              }
+              required
+              disabled={!hasAccounts}
+            >
+              <option value="">Выберите счет</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="mf-input">
+            <span className="mf-input__label">Куда</span>
+            <select
+              className="mf-select"
+              value={transferToAccountId}
+              onChange={(event) => setTransferToAccountId(event.target.value)}
+              required
+              disabled={!hasAccounts}
+            >
+              <option value="">Выберите счет</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Input
+            label="Сумма"
+            type="number"
+            value={transferAmount}
+            onChange={(event) => setTransferAmount(event.target.value)}
+            required
+            disabled={!hasAccounts}
+          />
+          <Input
+            label="Заметка"
+            type="text"
+            value={transferNote}
+            onChange={(event) => setTransferNote(event.target.value)}
+            disabled={!hasAccounts}
+          />
+          <Button type="submit" disabled={!hasAccounts}>
+            Добавить
+          </Button>
+        </form>
+        {transferErrorDetails && (
+          <div>
+            <p>tx_http_status: {transferErrorDetails.httpStatus ?? "unknown"}</p>
+            <p>
+              tx_response_text: {transferErrorDetails.responseText ?? "unknown"}
+            </p>
+          </div>
+        )}
+      </Card>
+
+      <Card title="Долги людям">
+        {!hasAccounts && <p>Сначала добавьте хотя бы один счёт.</p>}
+        <form className="mf-stack" onSubmit={handleCreateDebtOther}>
+          <label className="mf-input">
+            <span className="mf-input__label">Направление</span>
+            <select
+              className="mf-select"
+              value={debtOtherDirection}
+              onChange={(event) =>
+                setDebtOtherDirection(
+                  event.target.value as "borrowed" | "repaid",
+                )
+              }
+            >
+              <option value="borrowed">Взял в долг</option>
+              <option value="repaid">Отдал долг</option>
+            </select>
+          </label>
+          <label className="mf-input">
+            <span className="mf-input__label">Куда пришли/откуда ушли</span>
+            <select
+              className="mf-select"
+              value={debtOtherAccountId}
+              onChange={(event) => setDebtOtherAccountId(event.target.value)}
+              disabled={!hasAccounts}
+              required
+            >
+              <option value="">Выберите счет</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Input
+            label="Сумма"
+            type="number"
+            value={debtOtherAmount}
+            onChange={(event) => setDebtOtherAmount(event.target.value)}
+            required
+            disabled={!hasAccounts}
+          />
+          <Input
+            label="Дата"
+            type="date"
+            value={selectedDate}
+            onChange={(event) => event.preventDefault()}
+            readOnly
+          />
+          <Button type="submit" disabled={!hasAccounts}>
+            Сохранить
+          </Button>
+        </form>
+        {debtOtherErrorDetails && (
+          <div>
+            <p>
+              debt_http_status: {debtOtherErrorDetails.httpStatus ?? "unknown"}
+            </p>
+            <p>
+              debt_response_text:{" "}
+              {debtOtherErrorDetails.responseText ?? "unknown"}
+            </p>
+          </div>
+        )}
+      </Card>
+
+      <TransactionsCard title="Операции за день" />
+    </div>
+  );
+
+  const ReportsTab = () => (
+    <div className="mf-stack">
+      <Card title="Режим просмотра">
+        <div className="mf-row">
+          <Button
+            variant={viewMode === "day" ? "primary" : "secondary"}
+            onClick={() => setViewMode("day")}
+          >
+            День
+          </Button>
+          <Button
+            variant={viewMode === "month" ? "primary" : "secondary"}
+            onClick={() => setViewMode("month")}
+          >
+            Месяц
+          </Button>
+        </div>
+      </Card>
+
+      {viewMode === "day" ? (
+        <>
+          <Card title="Быстрые карточки">
+            <div className="mf-stack">
+              <p>Остаток: {assetsTotal} ₽</p>
+              <p>Долги: {debtsTotal} ₽</p>
+              <p>Баланс: {balanceTotal} ₽</p>
+              <p>Итог дня (нижний): {bottomDayTotal} ₽</p>
+              <p>Итог дня (верхний): {topDayTotal} ₽</p>
+            </div>
+          </Card>
+          <Card title="Период отчёта">
+            <div className="mf-row">
+              <Input
+                label="Период с"
+                type="date"
+                value={reportFrom}
+                onChange={(event) => setReportFrom(event.target.value)}
+              />
+              <Input
+                label="по"
+                type="date"
+                value={reportTo}
+                onChange={(event) => setReportTo(event.target.value)}
+              />
+            </div>
+          </Card>
+          <Card title="Доходы/расходы по дням">
+            {reportCashflow.length ? (
+              <table className="mf-table">
                 <thead>
                   <tr>
-                    <th>Шаблон</th>
-                    <th>Счет</th>
-                    <th>Категория</th>
-                    <th>Тег</th>
-                    <th></th>
+                    <th>Дата</th>
+                    <th>Доход</th>
+                    <th>Расход</th>
+                    <th>Итог</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rules.map((rule) => (
-                    <tr key={rule.id}>
-                      <td>{rule.pattern}</td>
-                      <td>{getAccountLabel(rule.account_id)}</td>
-                      <td>{getCategoryLabel(rule.category_id)}</td>
-                      <td>{getTagLabel(rule.tag)}</td>
+                  {reportCashflow.map((row) => (
+                    <tr key={row.date}>
+                      <td>{row.date}</td>
+                      <td>{row.income_total} ₽</td>
+                      <td>{row.expense_total} ₽</td>
+                      <td>{row.net_total} ₽</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p>Нет данных</p>
+            )}
+          </Card>
+          <Card title="Динамика баланса">
+            {reportBalance.length ? (
+              <table className="mf-table">
+                <thead>
+                  <tr>
+                    <th>Дата</th>
+                    <th>Остаток</th>
+                    <th>Долги</th>
+                    <th>Баланс</th>
+                    <th>Итог за день</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reportBalance.map((row) => (
+                    <tr key={row.date}>
+                      <td>{row.date}</td>
+                      <td>{row.assets_total} ₽</td>
+                      <td>{row.debts_total} ₽</td>
+                      <td>{row.balance} ₽</td>
                       <td>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteRule(rule.id)}
-                        >
-                          Удалить
-                        </button>
+                        {row.delta_balance >= 0 ? "+" : ""}
+                        {row.delta_balance} ₽
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             ) : (
-              <p>Нет правил</p>
+              <p>Нет данных</p>
             )}
-            <form onSubmit={handleCreateRule}>
-              <label>
-                Шаблон:
-                <input
-                  type="text"
-                  value={rulePattern}
-                  onChange={(event) => setRulePattern(event.target.value)}
-                  required
-                />
-              </label>
-              <label>
-                Счет:
-                <select
-                  value={ruleAccountId}
-                  onChange={(event) => setRuleAccountId(event.target.value)}
-                >
-                  <option value="">Не выбран</option>
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Категория:
-                <select
-                  value={ruleCategoryId}
-                  onChange={(event) => setRuleCategoryId(event.target.value)}
-                >
-                  <option value="">Не выбрана</option>
-                  {categories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Тег:
-                <select
-                  value={ruleTag}
-                  onChange={(event) =>
-                    setRuleTag(
-                      event.target.value as "one_time" | "subscription",
-                    )
-                  }
-                >
-                  <option value="one_time">Разовый</option>
-                  <option value="subscription">Подписка</option>
-                </select>
-              </label>
-              <button type="submit">Добавить правило</button>
-            </form>
-          </section>
-
-          {viewMode === "day" && (
-            <>
-              {!hasAccounts ? (
-                <section>
-                  <h2>Состояние дня (верхняя таблица)</h2>
-                  <p>Создайте хотя бы один счёт, чтобы вести операции.</p>
-                </section>
-              ) : (
-                <>
-                  <section>
-                    <h2>Состояние дня (верхняя таблица)</h2>
-                    <div>
-                      {dailyStateAccounts.map((account) => (
-                        <label key={account.account_id}>
-                          {account.name} ({account.kind}):
-                          <input
-                            type="number"
-                            min="0"
-                            value={account.amountText}
-                            onChange={(event) =>
-                              handleDailyStateAccountChange(
-                                account.account_id,
-                                event.target.value,
-                              )
-                            }
-                          />
-                        </label>
-                      ))}
-                      <label>
-                        Кредитки/рассрочки:
-                        <input
-                          type="number"
-                          min="0"
-                          value={dailyStateForm.debt_cards_total}
-                          onChange={(event) =>
-                            handleDailyStateChange(
-                              "debt_cards_total",
-                              event.target.value,
-                            )
-                          }
-                        />
-                      </label>
-                      <label>
-                        Долги людям:
-                        <input
-                          type="number"
-                          min="0"
-                          value={dailyStateForm.debt_other_total}
-                          onChange={(event) =>
-                            handleDailyStateChange(
-                              "debt_other_total",
-                              event.target.value,
-                            )
-                          }
-                        />
-                      </label>
-                    </div>
-                    <p>Наличка (авто): {cashTotal} ₽</p>
-                    <p>Безнал (авто): {noncashTotal} ₽</p>
-                    <p>Остаток (авто): {assetsTotal} ₽</p>
-                    <p>Долги: {debtsTotal} ₽</p>
-                    <p>Баланс (авто): {balanceTotal} ₽</p>
-                    <p>Итог за день (верхний): {topDayTotal} ₽</p>
-                    <button type="button" onClick={handleSaveDailyState}>
-                      Сохранить состояние дня
-                    </button>
-                  </section>
-
-                  <section>
-                    <h2>Долги людям</h2>
-                    {!hasAccounts && (
-                      <p>Сначала добавьте хотя бы один счёт.</p>
-                    )}
-                    <form onSubmit={handleCreateDebtOther}>
-                      <label>
-                        Направление:
-                        <select
-                          value={debtOtherDirection}
-                          onChange={(event) =>
-                            setDebtOtherDirection(
-                              event.target.value as "borrowed" | "repaid",
-                            )
-                          }
-                        >
-                          <option value="borrowed">Взял в долг</option>
-                          <option value="repaid">Отдал долг</option>
-                        </select>
-                      </label>
-                      <label>
-                        Куда пришли/откуда ушли:
-                        <select
-                          value={debtOtherAccountId}
-                          onChange={(event) =>
-                            setDebtOtherAccountId(event.target.value)
-                          }
-                          disabled={!hasAccounts}
-                          required
-                        >
-                          <option value="">Выберите счет</option>
-                          {accounts.map((account) => (
-                            <option key={account.id} value={account.id}>
-                              {account.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        Сумма:
-                        <input
-                          type="number"
-                          min="1"
-                          value={debtOtherAmount}
-                          onChange={(event) =>
-                            setDebtOtherAmount(event.target.value)
-                          }
-                          required
-                          disabled={!hasAccounts}
-                        />
-                      </label>
-                      <label>
-                        Дата:
-                        <input type="date" value={selectedDate} readOnly />
-                      </label>
-                      <button type="submit" disabled={!hasAccounts}>
-                        Сохранить
-                      </button>
-                    </form>
-                    {debtOtherErrorDetails && (
-                      <div>
-                        <p>
-                          debt_http_status:{" "}
-                          {debtOtherErrorDetails.httpStatus ?? "unknown"}
-                        </p>
-                        <p>
-                          debt_response_text:{" "}
-                          {debtOtherErrorDetails.responseText ?? "unknown"}
-                        </p>
-                      </div>
-                    )}
-                  </section>
-                </>
-              )}
-            </>
-          )}
-
-          <section>
-            <h2>Цели</h2>
-            {accounts.length ? (
-              <label>
-                Счет для цели:
-                <select
-                  value={goalAccountId}
-                  onChange={(event) => setGoalAccountId(event.target.value)}
-                >
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+          </Card>
+          <Card title="Расходы по категориям">
+            <label className="mf-input">
+              <span className="mf-input__label">Top N</span>
+              <select
+                className="mf-select"
+                value={reportExpensesLimit}
+                onChange={handleReportExpensesLimitChange}
+              >
+                <option value={5}>5</option>
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+              </select>
+            </label>
+            {reportExpensesByCategory?.items?.length ? (
+              <table className="mf-table">
+                <thead>
+                  <tr>
+                    <th>Категория</th>
+                    <th>Сумма</th>
+                    <th>Доля %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reportExpensesByCategory.items.map((item) => {
+                    const isExpanded =
+                      expandedReportCategories[item.category_id];
+                    return (
+                      <Fragment key={item.category_id}>
+                        <tr>
+                          <td>
+                            {item.children.length ? (
+                              <Button
+                                variant="secondary"
+                                className="mf-button--small"
+                                onClick={() =>
+                                  toggleReportCategory(item.category_id)
+                                }
+                              >
+                                {isExpanded ? "Свернуть" : "Развернуть"}
+                              </Button>
+                            ) : null}{" "}
+                            {item.category_name}
+                          </td>
+                          <td>{item.amount} ₽</td>
+                          <td>{(item.share * 100).toFixed(1)}%</td>
+                        </tr>
+                        {isExpanded
+                          ? item.children.map((child) => (
+                              <tr key={child.category_id}>
+                                <td>— {child.category_name}</td>
+                                <td>{child.amount} ₽</td>
+                                <td>{(child.share * 100).toFixed(1)}%</td>
+                              </tr>
+                            ))
+                          : null}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
             ) : (
-              <p>Добавьте счет, чтобы пополнять цели.</p>
+              <p>Нет данных</p>
             )}
-            {goals.length ? (
-              <ul>
-                {goals.map((goal) => {
-                  const remaining = normalizeGoalRemaining(goal);
-                  const strategy = getGoalStrategy(goal);
-                  const isActive = goal.status === "active";
-                  const isReached =
-                    goal.current_amount >= goal.target_amount;
-                  const canWithdraw100 = goal.current_amount >= 100;
-                  const canWithdraw500 = goal.current_amount >= 500;
-                  const canWithdraw1000 = goal.current_amount >= 1000;
-                  return (
-                    <li key={goal.id}>
-                      <div>
-                        <strong>{goal.title}</strong>
-                        <p>
-                          Прогресс: {goal.current_amount} /{" "}
-                          {goal.target_amount} ₽
-                        </p>
-                        <p>Осталось: {remaining} ₽</p>
-                        {goal.deadline && <p>Дедлайн: {goal.deadline}</p>}
-                        <p>Статус: {goal.status}</p>
-                        {strategy && (
-                          <div>
-                            <p>Нужно откладывать {strategy.perDay} ₽/день</p>
-                            <p>
-                              Нужно откладывать {strategy.perWeek} ₽/неделю
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                      <div>
-                        <button
-                          type="button"
-                          onClick={() => handleGoalAdjust(goal.id, 100)}
-                          disabled={!isActive || isReached}
-                        >
-                          +100
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleGoalAdjust(goal.id, 500)}
-                          disabled={!isActive || isReached}
-                        >
-                          +500
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleGoalAdjust(goal.id, 1000)}
-                          disabled={!isActive || isReached}
-                        >
-                          +1000
-                        </button>
-                        {isReached && <span>Цель достигнута</span>}
-                        <button
-                          type="button"
-                          onClick={() => handleGoalAdjust(goal.id, -100)}
-                          disabled={!isActive || !canWithdraw100}
-                        >
-                          -100
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleGoalAdjust(goal.id, -500)}
-                          disabled={!isActive || !canWithdraw500}
-                        >
-                          -500
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleGoalAdjust(goal.id, -1000)}
-                          disabled={!isActive || !canWithdraw1000}
-                        >
-                          -1000
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleGoalClose(goal.id)}
-                          disabled={!isActive}
-                        >
-                          Закрыть
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleGoalArchive(goal.id)}
-                          disabled={goal.status === "archived"}
-                        >
-                          Архивировать
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteGoal(goal.id)}
-                        >
-                          Удалить
-                        </button>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
+          </Card>
+          <Card title="Долги сейчас">
+            <p>
+              Кредитки/рассрочки: {reportSummary?.debt_cards_total ?? 0} ₽
+            </p>
+            <p>Долги людям: {reportSummary?.debt_other_total ?? 0} ₽</p>
+          </Card>
+          <Card title="Цели (активные)">
+            {reportSummary?.goals_active?.length ? (
+              <table className="mf-table">
+                <thead>
+                  <tr>
+                    <th>Цель</th>
+                    <th>Прогресс</th>
+                    <th>Осталось</th>
+                    <th>Дедлайн</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reportSummary.goals_active.map((goal, index) => (
+                    <tr key={`${goal.title}-${index}`}>
+                      <td>{goal.title}</td>
+                      <td>
+                        {goal.current} / {goal.target} ₽
+                      </td>
+                      <td>{normalizeReportGoalRemaining(goal)} ₽</td>
+                      <td>{goal.deadline ?? "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             ) : (
-              <p>Нет целей</p>
+              <p>Нет активных целей</p>
             )}
-            <form onSubmit={handleCreateGoal}>
-              <label>
-                Цель:
-                <input
-                  type="text"
-                  value={goalTitle}
-                  onChange={(event) => setGoalTitle(event.target.value)}
-                  required
-                />
-              </label>
-              <label>
-                Сумма:
-                <input
-                  type="number"
-                  min="1"
-                  value={goalTargetAmount}
-                  onChange={(event) => setGoalTargetAmount(event.target.value)}
-                  required
-                />
-              </label>
-              <label>
-                Дедлайн:
-                <input
-                  type="date"
-                  value={goalDeadline}
-                  onChange={(event) => setGoalDeadline(event.target.value)}
-                />
-              </label>
-              <button type="submit">Создать цель</button>
-            </form>
-          </section>
-
-          {viewMode === "day" && (
-            <>
-              <section>
-                <h2>Операции за день</h2>
-                <label>
-                  Дата:
-                  <input
-                    type="date"
-                    value={selectedDate}
-                    onChange={(event) => setSelectedDate(event.target.value)}
-                  />
-                </label>
-                {transactions.length ? (
-                  <ul>
-                    {transactions.map((tx) => {
-                      const accountName =
-                        (tx.account_id && accountMap.get(tx.account_id)?.name) ||
-                        "Счет";
-                      const toAccountName =
-                        (tx.to_account_id &&
-                          accountMap.get(tx.to_account_id)?.name) ||
-                        "Счет";
-                      const goalTitle =
-                        (tx.goal_id &&
-                          goals.find((goal) => goal.id === tx.goal_id)?.title) ||
-                        null;
-                      const categoryName =
-                        (tx.category_id &&
-                          categories.find((cat) => cat.id === tx.category_id)
-                            ?.name) ||
-                        null;
-                      const isGoalTransfer = tx.kind === "goal_transfer";
-                      return (
-                        <li key={tx.id}>
-                          <div>
-                            <strong>
-                              {isGoalTransfer ? "goal_transfer" : tx.type}
-                            </strong>
-                            : {tx.amount} ₽{" "}
-                            {tx.type === "transfer" && (
-                              <span>
-                                {accountName} → {toAccountName}
-                              </span>
-                            )}
-                            {tx.type !== "transfer" && <span>{accountName}</span>}
-                            {isGoalTransfer && (
-                              <span>
-                                {" "}
-                                (Цель: {goalTitle ?? "—"})
-                              </span>
-                            )}
-                            {tx.type === "expense" && !isGoalTransfer && (
-                              <span>
-                                {" "}
-                                {categoryName
-                                  ? `(${categoryName})`
-                                  : "(Без категории)"}
-                              </span>
-                            )}
-                            {tx.note && <span> — {tx.note}</span>}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteTransaction(tx.id)}
-                          >
-                            Удалить
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : (
-                  <p>Нет операций</p>
-                )}
-                <p>Итог за день (нижний): {bottomDayTotal} ₽</p>
-              </section>
-
-              {hasAccounts && (
-                <section>
-                  <h2>Сверка</h2>
-                  <p style={{ fontSize: "12px", opacity: 0.7 }}>
-                    lastQuickAdjustClick: {lastQuickAdjustClick || "—"}
-                  </p>
-                  <p>
-                    Верхний итог: {topDayTotal} ₽, Нижний итог: {bottomDayTotal}{" "}
-                    ₽, Разница: {reconcileDiff} ₽
-                  </p>
-                  {isReconciledOrClose ? (
-                    <p>Сверка: OK</p>
-                  ) : (
-                    <>
-                      <p>Сверка: расхождение {reconcileDiffAbs} ₽</p>
-                      <p>
-                        {reconcileDiff > 1
-                          ? "Остатки больше, чем операции. Нужна корректировка."
-                          : "Остатки меньше, чем операции. Нужна корректировка."}
-                      </p>
-                      <div>
-                        {shouldShowQuickAdjust &&
-                          dailyStateAccounts.map((account) => (
-                            <div key={account.account_id}>
-                              {(() => {
-                                const currentValue =
-                                  getAccountCurrentValue(account);
-                                const nextValue = currentValue + deltaToApply;
-                                const isInsufficient = nextValue < 0;
-                                const insufficientMessage =
-                                  buildQuickAdjustInsufficientMessage(
-                                    currentValue,
-                                    deltaToApply,
-                                    nextValue,
-                                  );
-                                return (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        handleQuickAdjust(
-                                          account.account_id,
-                                          deltaToApply,
-                                        )
-                                      }
-                                      disabled={
-                                        isQuickAdjusting || isInsufficient
-                                      }
-                                      title={
-                                        isInsufficient
-                                          ? insufficientMessage
-                                          : undefined
-                                      }
-                                    >
-                                      {isQuickAdjusting
-                                        ? "Применяю…"
-                                        : `Изменить ${account.name} на ${deltaToApply} ₽`}
-                                    </button>
-                                    {isInsufficient && (
-                                      <p>{insufficientMessage}</p>
-                                    )}
-                                  </>
-                                );
-                              })()}
-                            </div>
-                          ))}
-                      </div>
-                      {quickAdjustErrorDetails && (
-                        <div>
-                          <p>
-                            http_status:{" "}
-                            {quickAdjustErrorDetails.httpStatus ?? "unknown"}
-                          </p>
-                          <p>
-                            response_text:{" "}
-                            {quickAdjustErrorDetails.responseText ?? "unknown"}
-                          </p>
-                        </div>
-                      )}
-                      {quickAdjustError && <p>{quickAdjustError}</p>}
-                    </>
-                  )}
-                </section>
-              )}
-            </>
-          )}
-
-          <section>
-            <h2>Добавить доход</h2>
-            {!hasAccounts && (
-              <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
-            )}
-            <form onSubmit={handleCreateIncome}>
-              <label>
-                Счет:
-                <select
-                  value={incomeAccountId}
-                  onChange={(event) => setIncomeAccountId(event.target.value)}
-                  required
-                  disabled={!hasAccounts}
-                >
-                  <option value="">Выберите счет</option>
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Сумма:
-                <input
-                  type="number"
-                  min="1"
-                  value={incomeAmount}
-                  onChange={(event) => setIncomeAmount(event.target.value)}
-                  required
-                  disabled={!hasAccounts}
-                />
-              </label>
-              <label>
-                Тег:
-                <select
-                  value={incomeTag}
-                  onChange={(event) =>
-                    setIncomeTag(
-                      event.target.value as "one_time" | "subscription",
-                    )
-                  }
-                  disabled={!hasAccounts}
-                >
-                  <option value="one_time">Разовый</option>
-                  <option value="subscription">Подписка</option>
-                </select>
-              </label>
-              <label>
-                Заметка:
-                <input
-                  type="text"
-                  value={incomeNote}
-                  onChange={(event) => setIncomeNote(event.target.value)}
-                  disabled={!hasAccounts}
-                />
-              </label>
-              <button type="submit" disabled={!hasAccounts}>
-                Добавить
-              </button>
-            </form>
-            {incomeErrorDetails && (
-              <div>
-                <p>
-                  tx_http_status: {incomeErrorDetails.httpStatus ?? "unknown"}
-                </p>
-                <p>
-                  tx_response_text:{" "}
-                  {incomeErrorDetails.responseText ?? "unknown"}
-                </p>
-              </div>
-            )}
-          </section>
-
-          <section>
-            <h2>Добавить расход</h2>
-            {!hasAccounts && (
-              <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
-            )}
-            <form onSubmit={handleCreateExpense}>
-              <label>
-                Счет:
-                <select
-                  value={expenseAccountId}
-                  onChange={(event) => setExpenseAccountId(event.target.value)}
-                  required
-                  disabled={!hasAccounts}
-                >
-                  <option value="">Выберите счет</option>
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Сумма:
-                <input
-                  type="number"
-                  min="1"
-                  value={expenseAmount}
-                  onChange={(event) => setExpenseAmount(event.target.value)}
-                  required
-                  disabled={!hasAccounts}
-                />
-              </label>
-              <label>
-                Категория:
-                <select
-                  value={expenseCategoryId}
-                  onChange={(event) => setExpenseCategoryId(event.target.value)}
-                  disabled={!hasAccounts}
-                >
-                  <option value="">Без категории</option>
-                  {categories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Тег:
-                <select
-                  value={expenseTag}
-                  onChange={(event) =>
-                    setExpenseTag(
-                      event.target.value as "one_time" | "subscription",
-                    )
-                  }
-                  disabled={!hasAccounts}
-                >
-                  <option value="one_time">Разовый</option>
-                  <option value="subscription">Подписка</option>
-                </select>
-              </label>
-              <label>
-                Заметка:
-                <input
-                  type="text"
-                  value={expenseNote}
-                  onChange={(event) => setExpenseNote(event.target.value)}
-                  disabled={!hasAccounts}
-                />
-              </label>
-              <button type="submit" disabled={!hasAccounts}>
-                Добавить
-              </button>
-            </form>
-            {expenseErrorDetails && (
-              <div>
-                <p>
-                  tx_http_status: {expenseErrorDetails.httpStatus ?? "unknown"}
-                </p>
-                <p>
-                  tx_response_text:{" "}
-                  {expenseErrorDetails.responseText ?? "unknown"}
-                </p>
-              </div>
-            )}
-          </section>
-
-          <section>
-            <h2>Добавить перевод</h2>
-            {!hasAccounts && (
-              <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
-            )}
-            <form onSubmit={handleCreateTransfer}>
-              <label>
-                Откуда:
-                <select
-                  value={transferFromAccountId}
-                  onChange={(event) =>
-                    setTransferFromAccountId(event.target.value)
-                  }
-                  required
-                  disabled={!hasAccounts}
-                >
-                  <option value="">Выберите счет</option>
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Куда:
-                <select
-                  value={transferToAccountId}
-                  onChange={(event) =>
-                    setTransferToAccountId(event.target.value)
-                  }
-                  required
-                  disabled={!hasAccounts}
-                >
-                  <option value="">Выберите счет</option>
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Сумма:
-                <input
-                  type="number"
-                  min="1"
-                  value={transferAmount}
-                  onChange={(event) => setTransferAmount(event.target.value)}
-                  required
-                  disabled={!hasAccounts}
-                />
-              </label>
-              <label>
-                Заметка:
-                <input
-                  type="text"
-                  value={transferNote}
-                  onChange={(event) => setTransferNote(event.target.value)}
-                  disabled={!hasAccounts}
-                />
-              </label>
-              <button type="submit" disabled={!hasAccounts}>
-                Добавить
-              </button>
-            </form>
-            {transferErrorDetails && (
-              <div>
-                <p>
-                  tx_http_status: {transferErrorDetails.httpStatus ?? "unknown"}
-                </p>
-                <p>
-                  tx_response_text:{" "}
-                  {transferErrorDetails.responseText ?? "unknown"}
-                </p>
-              </div>
-            )}
-          </section>
-
-          <section>
-            <h2>Добавить счёт</h2>
-            <form onSubmit={handleCreateAccount}>
-              <label>
-                Название:
-                <input
-                  type="text"
-                  value={accountName}
-                  onChange={(event) => setAccountName(event.target.value)}
-                  required
-                />
-              </label>
-              <label>
-                Тип:
-                <select
-                  value={accountKind}
-                  onChange={(event) => setAccountKind(event.target.value)}
-                >
-                  <option value="cash">Наличные</option>
-                  <option value="bank">Банк</option>
-                </select>
-              </label>
-              <button type="submit">Добавить</button>
-            </form>
-            {accountErrorDetails && (
-              <div>
-                <p>
-                  http_status: {accountErrorDetails.httpStatus ?? "unknown"}
-                </p>
-                <p>
-                  response_text: {accountErrorDetails.responseText ?? "unknown"}
-                </p>
-              </div>
-            )}
-          </section>
-
-          <section>
-            <h2>Добавить категорию</h2>
-            <form onSubmit={handleCreateCategory}>
-              <label>
-                Название:
-                <input
-                  type="text"
-                  value={categoryName}
-                  onChange={(event) => setCategoryName(event.target.value)}
-                  required
-                />
-              </label>
-              <label>
-                Родитель:
-                <select
-                  value={categoryParent}
-                  onChange={(event) => setCategoryParent(event.target.value)}
-                >
-                  <option value="">None</option>
-                  {categories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button type="submit">Добавить</button>
-            </form>
-            {categoryErrorDetails && (
-              <div>
-                <p>
-                  http_status: {categoryErrorDetails.httpStatus ?? "unknown"}
-                </p>
-                <p>
-                  response_text: {categoryErrorDetails.responseText ?? "unknown"}
-                </p>
-              </div>
-            )}
-          </section>
-
-          <section>
-            <button type="button" onClick={handleResetBudget}>
-              Обнулить всё
-            </button>
-            <button type="button" onClick={handleLogout}>
-              Logout
-            </button>
-          </section>
+          </Card>
         </>
+      ) : (
+        <>
+          <Card title="Быстрые карточки">
+            <div className="mf-stack">
+              <p>Доходы: {monthIncomeTotal} ₽</p>
+              <p>Расходы: {monthExpenseTotal} ₽</p>
+              <p>Итог месяца: {monthNetTotal} ₽</p>
+              <p>Средний итог/день: {monthAvgNet} ₽</p>
+            </div>
+          </Card>
+          <Card title="Месяц">
+            <Input
+              label="Месяц"
+              type="month"
+              value={selectedMonth}
+              onChange={(event) => setSelectedMonth(event.target.value)}
+            />
+          </Card>
+          <Card title="Дни месяца">
+            {monthReport?.days?.length ? (
+              <table className="mf-table">
+                <thead>
+                  <tr>
+                    <th>Дата</th>
+                    <th>Верхний итог</th>
+                    <th>Нижний итог</th>
+                    <th>Сверка</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthReport.days.map((row: MonthReportDay) => (
+                    <tr key={row.date}>
+                      <td>{row.date}</td>
+                      <td>{row.top_total} ₽</td>
+                      <td>{row.bottom_total} ₽</td>
+                      <td>{renderMonthReconcileStatus(row.diff)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p>Нет данных</p>
+            )}
+          </Card>
+        </>
+      )}
+    </div>
+  );
+
+  const SettingsTab = () => (
+    <div className="mf-stack">
+      <Card title="Бюджеты">
+        <label className="mf-input">
+          <span className="mf-input__label">Активный бюджет</span>
+          <select
+            className="mf-select"
+            value={activeBudgetId ?? ""}
+            onChange={handleBudgetChange}
+          >
+            {budgets.map((budget) => (
+              <option key={budget.id} value={budget.id}>
+                {budget.name} ({budget.type})
+              </option>
+            ))}
+          </select>
+        </label>
+      </Card>
+
+      <Card title="Счета">
+        {accounts.length ? (
+          <ul className="mf-list">
+            {accounts.map((account) => (
+              <li key={account.id}>
+                {account.name} ({account.kind})
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>Нет счетов</p>
+        )}
+      </Card>
+
+      <Card title="Категории">
+        {categories.length ? renderCategoryTree(null) : <p>Нет категорий</p>}
+      </Card>
+
+      <Card title="Мои правила">
+        {rules.length ? (
+          <table className="mf-table">
+            <thead>
+              <tr>
+                <th>Шаблон</th>
+                <th>Счет</th>
+                <th>Категория</th>
+                <th>Тег</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rules.map((rule) => (
+                <tr key={rule.id}>
+                  <td>{rule.pattern}</td>
+                  <td>{getAccountLabel(rule.account_id)}</td>
+                  <td>{getCategoryLabel(rule.category_id)}</td>
+                  <td>{getTagLabel(rule.tag)}</td>
+                  <td>
+                    <Button
+                      variant="danger"
+                      className="mf-button--small"
+                      onClick={() => handleDeleteRule(rule.id)}
+                    >
+                      Удалить
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p>Нет правил</p>
+        )}
+        <form className="mf-stack" onSubmit={handleCreateRule}>
+          <Input
+            label="Шаблон"
+            type="text"
+            value={rulePattern}
+            onChange={(event) => setRulePattern(event.target.value)}
+            required
+          />
+          <label className="mf-input">
+            <span className="mf-input__label">Счет</span>
+            <select
+              className="mf-select"
+              value={ruleAccountId}
+              onChange={(event) => setRuleAccountId(event.target.value)}
+            >
+              <option value="">Не выбран</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="mf-input">
+            <span className="mf-input__label">Категория</span>
+            <select
+              className="mf-select"
+              value={ruleCategoryId}
+              onChange={(event) => setRuleCategoryId(event.target.value)}
+            >
+              <option value="">Не выбрана</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="mf-input">
+            <span className="mf-input__label">Тег</span>
+            <select
+              className="mf-select"
+              value={ruleTag}
+              onChange={(event) =>
+                setRuleTag(event.target.value as "one_time" | "subscription")
+              }
+            >
+              <option value="one_time">Разовый</option>
+              <option value="subscription">Подписка</option>
+            </select>
+          </label>
+          <Button type="submit">Добавить правило</Button>
+        </form>
+      </Card>
+
+      <Card title="Цели">
+        {accounts.length ? (
+          <label className="mf-input">
+            <span className="mf-input__label">Счет для цели</span>
+            <select
+              className="mf-select"
+              value={goalAccountId}
+              onChange={(event) => setGoalAccountId(event.target.value)}
+            >
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <p>Добавьте счет, чтобы пополнять цели.</p>
+        )}
+        {goals.length ? (
+          <ul className="mf-list">
+            {goals.map((goal) => {
+              const remaining = normalizeGoalRemaining(goal);
+              const strategy = getGoalStrategy(goal);
+              const isActive = goal.status === "active";
+              const isReached = goal.current_amount >= goal.target_amount;
+              const canWithdraw100 = goal.current_amount >= 100;
+              const canWithdraw500 = goal.current_amount >= 500;
+              const canWithdraw1000 = goal.current_amount >= 1000;
+              return (
+                <li key={goal.id} className="mf-list-item">
+                  <div>
+                    <strong>{goal.title}</strong>
+                    <p>
+                      Прогресс: {goal.current_amount} / {goal.target_amount} ₽
+                    </p>
+                    <p>Осталось: {remaining} ₽</p>
+                    {goal.deadline && <p>Дедлайн: {goal.deadline}</p>}
+                    <p>Статус: {goal.status}</p>
+                    {strategy && (
+                      <div>
+                        <p>Нужно откладывать {strategy.perDay} ₽/день</p>
+                        <p>Нужно откладывать {strategy.perWeek} ₽/неделю</p>
+                      </div>
+                    )}
+                  </div>
+                  <div className="mf-row">
+                    <Button
+                      variant="secondary"
+                      className="mf-button--small"
+                      onClick={() => handleGoalAdjust(goal.id, 100)}
+                      disabled={!isActive || isReached}
+                    >
+                      +100
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      className="mf-button--small"
+                      onClick={() => handleGoalAdjust(goal.id, 500)}
+                      disabled={!isActive || isReached}
+                    >
+                      +500
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      className="mf-button--small"
+                      onClick={() => handleGoalAdjust(goal.id, 1000)}
+                      disabled={!isActive || isReached}
+                    >
+                      +1000
+                    </Button>
+                    {isReached && <span>Цель достигнута</span>}
+                    <Button
+                      variant="secondary"
+                      className="mf-button--small"
+                      onClick={() => handleGoalAdjust(goal.id, -100)}
+                      disabled={!isActive || !canWithdraw100}
+                    >
+                      -100
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      className="mf-button--small"
+                      onClick={() => handleGoalAdjust(goal.id, -500)}
+                      disabled={!isActive || !canWithdraw500}
+                    >
+                      -500
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      className="mf-button--small"
+                      onClick={() => handleGoalAdjust(goal.id, -1000)}
+                      disabled={!isActive || !canWithdraw1000}
+                    >
+                      -1000
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      className="mf-button--small"
+                      onClick={() => handleGoalClose(goal.id)}
+                      disabled={!isActive}
+                    >
+                      Закрыть
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      className="mf-button--small"
+                      onClick={() => handleGoalArchive(goal.id)}
+                      disabled={goal.status === "archived"}
+                    >
+                      Архивировать
+                    </Button>
+                    <Button
+                      variant="danger"
+                      className="mf-button--small"
+                      onClick={() => handleDeleteGoal(goal.id)}
+                    >
+                      Удалить
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p>Нет целей</p>
+        )}
+        <form className="mf-stack" onSubmit={handleCreateGoal}>
+          <Input
+            label="Цель"
+            type="text"
+            value={goalTitle}
+            onChange={(event) => setGoalTitle(event.target.value)}
+            required
+          />
+          <Input
+            label="Сумма"
+            type="number"
+            value={goalTargetAmount}
+            onChange={(event) => setGoalTargetAmount(event.target.value)}
+            required
+          />
+          <Input
+            label="Дедлайн"
+            type="date"
+            value={goalDeadline}
+            onChange={(event) => setGoalDeadline(event.target.value)}
+          />
+          <Button type="submit">Создать цель</Button>
+        </form>
+      </Card>
+
+      <Card title="Добавить счёт">
+        <form className="mf-stack" onSubmit={handleCreateAccount}>
+          <Input
+            label="Название"
+            type="text"
+            value={accountName}
+            onChange={(event) => setAccountName(event.target.value)}
+            required
+          />
+          <label className="mf-input">
+            <span className="mf-input__label">Тип</span>
+            <select
+              className="mf-select"
+              value={accountKind}
+              onChange={(event) => setAccountKind(event.target.value)}
+            >
+              <option value="cash">Наличные</option>
+              <option value="bank">Банк</option>
+            </select>
+          </label>
+          <Button type="submit">Добавить</Button>
+        </form>
+        {accountErrorDetails && (
+          <div>
+            <p>http_status: {accountErrorDetails.httpStatus ?? "unknown"}</p>
+            <p>
+              response_text: {accountErrorDetails.responseText ?? "unknown"}
+            </p>
+          </div>
+        )}
+      </Card>
+
+      <Card title="Добавить категорию">
+        <form className="mf-stack" onSubmit={handleCreateCategory}>
+          <Input
+            label="Название"
+            type="text"
+            value={categoryName}
+            onChange={(event) => setCategoryName(event.target.value)}
+            required
+          />
+          <label className="mf-input">
+            <span className="mf-input__label">Родитель</span>
+            <select
+              className="mf-select"
+              value={categoryParent}
+              onChange={(event) => setCategoryParent(event.target.value)}
+            >
+              <option value="">None</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button type="submit">Добавить</Button>
+        </form>
+        {categoryErrorDetails && (
+          <div>
+            <p>http_status: {categoryErrorDetails.httpStatus ?? "unknown"}</p>
+            <p>
+              response_text: {categoryErrorDetails.responseText ?? "unknown"}
+            </p>
+          </div>
+        )}
+      </Card>
+
+      <Card title="Техническое меню">
+        <div className="mf-row">
+          <Button variant="danger" onClick={handleResetBudget}>
+            Обнулить всё
+          </Button>
+          <Button variant="secondary" onClick={handleLogout}>
+            Logout
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
+
+  return (
+    <main>
+      <div className="mf-container">
+        <h1>Мои финансы</h1>
+        <Card title="Статус">
+          {status === "loading" && <p>Загрузка...</p>}
+          {status === "unauthorized" && (
+            <div className="mf-stack">
+              {message && <p>{message}</p>}
+              {authErrorDetails && (
+                <div>
+                  <p>auth_url: {authErrorDetails.authUrl}</p>
+                  <p>error_code: {authErrorDetails.errorCode}</p>
+                  <p>initData_length: {authErrorDetails.initDataLength}</p>
+                  {authErrorDetails.httpStatus !== undefined && (
+                    <p>http_status: {authErrorDetails.httpStatus}</p>
+                  )}
+                  {authErrorDetails.responseText && (
+                    <p>response_text: {authErrorDetails.responseText}</p>
+                  )}
+                </div>
+              )}
+              <p>Откройте в Telegram Mini App</p>
+            </div>
+          )}
+          {status === "error" && (
+            <div className="mf-stack">
+              {message && <p>{message}</p>}
+              {healthErrorDetails && (
+                <div>
+                  <p>API недоступен</p>
+                  <p>url: {healthErrorDetails.url}</p>
+                </div>
+              )}
+              {authErrorDetails && !healthErrorDetails && (
+                <div>
+                  <p>auth_url: {authErrorDetails.authUrl}</p>
+                  <p>error_code: {authErrorDetails.errorCode}</p>
+                  <p>initData_length: {authErrorDetails.initDataLength}</p>
+                  {authErrorDetails.httpStatus !== undefined && (
+                    <p>http_status: {authErrorDetails.httpStatus}</p>
+                  )}
+                  {authErrorDetails.responseText && (
+                    <p>response_text: {authErrorDetails.responseText}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          {status === "ready" && message && <p>{message}</p>}
+        </Card>
+
+        {status === "ready" && (
+          <>
+            {activeTab === "day" && <DayTab />}
+            {activeTab === "ops" && <OpsTab />}
+            {activeTab === "reports" && <ReportsTab />}
+            {activeTab === "settings" && <SettingsTab />}
+          </>
+        )}
+      </div>
+      {status === "ready" && (
+        <Tabs active={activeTab} onChange={setActiveTab} />
       )}
     </main>
   );
