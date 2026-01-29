@@ -50,7 +50,7 @@ def create_account(
 ) -> dict[str, Any]:
     _ensure_budget_access(user_id, budget_id)
     client = get_supabase_client()
-    from app.repositories.account_balance_events import create_balance_event
+    from app.repositories.transactions import create_transaction
     response = (
         client.table("accounts")
         .insert(
@@ -66,14 +66,20 @@ def create_account(
     data = response.data or []
     if data:
         account = data[0]
-        create_balance_event(
-            user_id,
-            budget_id,
-            active_from,
-            account["id"],
-            initial_amount,
-            "initial",
-        )
+        if initial_amount > 0:
+            create_transaction(
+                user_id,
+                {
+                    "budget_id": budget_id,
+                    "type": "income",
+                    "kind": "normal",
+                    "amount": initial_amount,
+                    "date": active_from,
+                    "account_id": account["id"],
+                    "tag": "one_time",
+                    "note": "Начальный остаток",
+                },
+            )
         return account
 
     fallback = (
@@ -90,12 +96,18 @@ def create_account(
     if not fallback_data:
         raise RuntimeError("Failed to create account in Supabase")
     account = fallback_data[0]
-    create_balance_event(
-        user_id,
-        budget_id,
-        active_from,
-        account["id"],
-        initial_amount,
-        "initial",
-    )
+    if initial_amount > 0:
+        create_transaction(
+            user_id,
+            {
+                "budget_id": budget_id,
+                "type": "income",
+                "kind": "normal",
+                "amount": initial_amount,
+                "date": active_from,
+                "account_id": account["id"],
+                "tag": "one_time",
+                "note": "Начальный остаток",
+            },
+        )
     return account

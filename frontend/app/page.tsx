@@ -234,6 +234,8 @@ export default function HomePage() {
     useState<FormErrorDetails | null>(null);
   const [debtOtherErrorDetails, setDebtOtherErrorDetails] =
     useState<FormErrorDetails | null>(null);
+  const [reconcileErrorDetails, setReconcileErrorDetails] =
+    useState<FormErrorDetails | null>(null);
 
   const setDailyStateFromData = (state: DailyState) => {
     setDailyState(state);
@@ -1134,11 +1136,12 @@ export default function HomePage() {
       setMessage("Выберите счет для корректировки");
       return;
     }
-    const delta = -reconcileDiff;
+    const delta = bottomDayTotal - topDayTotal;
     if (delta === 0) {
       return;
     }
     setMessage("");
+    setReconcileErrorDetails(null);
     try {
       await adjustAccountBalance(token, reconcileAccountId, {
         budget_id: activeBudgetId,
@@ -1149,6 +1152,11 @@ export default function HomePage() {
       rememberLastAccount(reconcileAccountId);
       await loadDailyStateData(token, activeBudgetId, selectedDate);
     } catch (error) {
+      const apiError = error as Error & { status?: number; text?: string };
+      setReconcileErrorDetails({
+        httpStatus: apiError.status,
+        responseText: apiError.text,
+      });
       setMessage(buildErrorMessage("Не удалось исправить сверку", error));
     }
   };
@@ -1840,30 +1848,44 @@ const DayTab = ({
             </tbody>
           </table>
           {reconcileDiff !== 0 && (
-            <div className="mf-row" style={{ alignItems: "flex-end" }}>
-              <label className="mf-input">
-                <span className="mf-input__label">Счет для корректировки</span>
-                <select
-                  className="mf-select"
-                  value={reconcileAccountId}
-                  onChange={(event) =>
-                    onReconcileAccountChange(event.target.value)
-                  }
+            <div className="mf-stack">
+              <div className="mf-row" style={{ alignItems: "flex-end" }}>
+                <label className="mf-input">
+                  <span className="mf-input__label">Счет для корректировки</span>
+                  <select
+                    className="mf-select"
+                    value={reconcileAccountId}
+                    onChange={(event) =>
+                      onReconcileAccountChange(event.target.value)
+                    }
+                  >
+                    <option value="">Выберите счет</option>
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <Button
+                  onClick={onReconcileAdjust}
+                  disabled={!reconcileAccountId}
                 >
-                  <option value="">Выберите счет</option>
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <Button
-                onClick={onReconcileAdjust}
-                disabled={!reconcileAccountId}
-              >
-                Исправить сверку
-              </Button>
+                  Исправить сверку
+                </Button>
+              </div>
+              {reconcileErrorDetails && (
+                <div className="mf-stack">
+                  <p>
+                    http_status:{" "}
+                    {reconcileErrorDetails.httpStatus ?? "unknown"}
+                  </p>
+                  <p>
+                    response_text:{" "}
+                    {reconcileErrorDetails.responseText ?? "unknown"}
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>
