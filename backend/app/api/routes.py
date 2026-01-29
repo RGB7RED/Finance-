@@ -361,6 +361,18 @@ def post_account_adjust(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Счет не найден для бюджета",
         )
+    current_balance = get_account_balance_as_of(
+        current_user["sub"],
+        payload.budget_id,
+        payload.date,
+        account_id,
+    )
+    resulting_balance = current_balance + payload.delta
+    if resulting_balance < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Insufficient funds: resulting balance < 0",
+        )
     create_balance_event(
         current_user["sub"],
         payload.budget_id,
