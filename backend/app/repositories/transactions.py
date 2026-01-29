@@ -9,6 +9,7 @@ from postgrest.exceptions import APIError
 
 from app.integrations.supabase_client import get_supabase_client
 from app.repositories.account_balance_events import (
+    GOAL_TRANSFER_REASON,
     TRANSFER_REASON,
     create_balance_event,
 )
@@ -70,8 +71,8 @@ def list_transactions(
     response = (
         client.table("transactions")
         .select(
-            "id, budget_id, user_id, date, type, amount, account_id, "
-            "to_account_id, category_id, tag, note, created_at"
+            "id, budget_id, user_id, date, type, kind, amount, account_id, "
+            "to_account_id, category_id, goal_id, tag, note, created_at"
         )
         .eq("budget_id", budget_id)
         .eq("date", date)
@@ -107,9 +108,32 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     _ensure_budget_access(user_id, budget_id)
 
     tx_type = payload.get("type")
+    kind = payload.get("kind")
     account_id = payload.get("account_id")
     to_account_id = payload.get("to_account_id")
     category_id = payload.get("category_id")
+    goal_id = payload.get("goal_id")
+
+    if kind is None:
+        kind = "transfer" if tx_type == "transfer" else "normal"
+        payload["kind"] = kind
+
+    if kind not in ("normal", "transfer", "goal_transfer"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid transaction kind",
+        )
+
+    if tx_type == "transfer" and kind != "transfer":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Transfers must have kind=transfer",
+        )
+    if tx_type in ("income", "expense") and kind == "transfer":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Income/expense cannot have kind=transfer",
+        )
 
     if tx_type == "transfer":
         if not account_id or not to_account_id:
@@ -154,6 +178,18 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             detail="Invalid transaction type",
         )
 
+    if kind == "goal_transfer":
+        if not goal_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="goal_id is required for goal transfers",
+            )
+        if category_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Goal transfers cannot have a category",
+            )
+
     serialized_payload = _serialize_payload(payload)
     rollback_event_ids: list[str] | None = None
 
@@ -181,6 +217,19 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             for event_id in (from_event.get("id"), to_event.get("id"))
             if event_id
         ]
+    elif kind == "goal_transfer":
+        target_date = _parse_payload_date(payload.get("date"))
+        amount = int(payload.get("amount", 0))
+        delta = amount if tx_type == "income" else -amount
+        event = create_balance_event(
+            user_id,
+            budget_id,
+            target_date,
+            account_id,
+            delta,
+            GOAL_TRANSFER_REASON,
+        )
+        rollback_event_ids = [event.get("id")] if event.get("id") else None
 
     client = get_supabase_client()
     try:

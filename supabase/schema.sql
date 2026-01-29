@@ -44,13 +44,16 @@ create table if not exists public.transactions (
     user_id uuid not null references public.users(id) on delete cascade,
     date date not null,
     type text not null check (type in ('income', 'expense', 'transfer')),
+    kind text not null default 'normal',
     amount integer not null check (amount > 0),
     account_id uuid null references public.accounts(id) on delete cascade,
     to_account_id uuid null references public.accounts(id) on delete cascade,
     category_id uuid null references public.categories(id) on delete set null,
+    goal_id uuid null,
     tag text not null check (tag in ('one_time', 'subscription')),
     note text null,
     created_at timestamptz not null default now(),
+    check (kind in ('normal', 'transfer', 'goal_transfer')),
     check (
         (
             type in ('income', 'expense')
@@ -159,3 +162,7 @@ create table if not exists public.goals (
 
 create index if not exists goals_budget_user_idx
     on public.goals (budget_id, user_id);
+
+alter table public.transactions
+    add constraint transactions_goal_id_fkey
+    foreign key (goal_id) references public.goals(id) on delete set null;

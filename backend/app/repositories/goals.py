@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from fastapi import HTTPException, status
 from postgrest.exceptions import APIError
 
 from app.integrations.supabase_client import get_supabase_client
+from app.repositories.transactions import create_transaction
 
 
 def _ensure_budget_access(user_id: str, budget_id: str) -> None:
@@ -28,7 +30,7 @@ def _get_goal_for_update(user_id: str, goal_id: str) -> dict[str, Any]:
     client = get_supabase_client()
     response = (
         client.table("goals")
-        .select("id, budget_id, user_id, target_amount, current_amount")
+        .select("id, budget_id, user_id, title, target_amount, current_amount")
         .eq("id", goal_id)
         .execute()
     )
@@ -43,6 +45,33 @@ def _get_goal_for_update(user_id: str, goal_id: str) -> dict[str, Any]:
         )
     _ensure_budget_access(user_id, record["budget_id"])
     return record
+
+
+def _ensure_account_in_budget(budget_id: str, account_id: str) -> None:
+    client = get_supabase_client()
+    response = (
+        client.table("accounts")
+        .select("id")
+        .eq("id", account_id)
+        .eq("budget_id", budget_id)
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account not found for budget",
+        )
+
+
+def _parse_payload_date(value: Any) -> date:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        return date.fromisoformat(value)
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid date for goal adjust",
+    )
 
 
 def list_goals(user_id: str, budget_id: str) -> list[dict[str, Any]]:
@@ -147,3 +176,93 @@ def delete_goal(user_id: str, goal_id: str) -> dict[str, Any]:
     client = get_supabase_client()
     client.table("goals").delete().eq("id", goal_id).execute()
     return record
+
+
+def adjust_goal_amount(
+    user_id: str,
+    goal_id: str,
+    budget_id: str,
+    account_id: str,
+    delta: int,
+    note: str | None = None,
+    target_date: date | str | None = None,
+) -> dict[str, Any]:
+    if delta == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Delta must be non-zero",
+        )
+    record = _get_goal_for_update(user_id, goal_id)
+    if record["budget_id"] != budget_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Goal not found for budget",
+        )
+    _ensure_account_in_budget(budget_id, account_id)
+    current_amount = int(record.get("current_amount", 0))
+    target_amount = int(record.get("target_amount", 0))
+
+    if delta < 0 and abs(delta) > current_amount:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Недостаточно средств для снятия",
+        )
+
+    next_amount = max(0, min(target_amount, current_amount + delta))
+    applied_delta = next_amount - current_amount
+    if applied_delta == 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Цель уже достигла лимита",
+        )
+
+    target_date_value = (
+        _parse_payload_date(target_date) if target_date else date.today()
+    )
+    direction = "expense" if applied_delta > 0 else "income"
+    amount = abs(applied_delta)
+    sign = "+" if applied_delta > 0 else "-"
+    note_prefix = f"Goal: {record.get('title')} ({sign}{amount})"
+    tx_note = f"{note_prefix} — {note}" if note else note_prefix
+
+    client = get_supabase_client()
+    try:
+        goal_response = (
+            client.table("goals")
+            .update({"current_amount": next_amount})
+            .eq("id", goal_id)
+            .execute()
+        )
+    except APIError as exc:
+        detail = getattr(exc, "message", None) or str(exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail,
+        ) from exc
+
+    try:
+        transaction = create_transaction(
+            user_id,
+            {
+                "budget_id": budget_id,
+                "type": direction,
+                "kind": "goal_transfer",
+                "amount": amount,
+                "date": target_date_value.isoformat(),
+                "account_id": account_id,
+                "category_id": None,
+                "goal_id": goal_id,
+                "tag": "one_time",
+                "note": tx_note,
+            },
+        )
+    except HTTPException:
+        client.table("goals").update({"current_amount": current_amount}).eq(
+            "id", goal_id
+        ).execute()
+        raise
+
+    goal_data = goal_response.data or []
+    if not goal_data:
+        raise RuntimeError("Failed to update goal in Supabase")
+    return {"goal": goal_data[0], "transaction": transaction}

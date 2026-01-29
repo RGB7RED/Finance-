@@ -13,6 +13,7 @@ from app.repositories.accounts import list_accounts
 MANUAL_ADJUST_REASON = "manual_adjust"
 TRANSFER_REASON = "transfer"
 RECONCILE_ADJUST_REASON = "reconcile_adjust"
+GOAL_TRANSFER_REASON = "goal_transfer"
 
 
 def _ensure_budget_access(user_id: str, budget_id: str) -> None:
