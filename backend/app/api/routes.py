@@ -312,8 +312,7 @@ def get_accounts(
     as_of: dt.date | None = None,
     current_user: dict = Depends(get_current_user),
 ) -> list[dict]:
-    target_date = as_of or _utc_today()
-    return list_accounts(current_user["sub"], budget_id, target_date)
+    return list_accounts(current_user["sub"], budget_id, as_of)
 
 
 @router.get("/accounts/exists")
@@ -322,8 +321,7 @@ def get_accounts_exists(
     as_of: dt.date | None = None,
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, bool]:
-    target_date = as_of or _utc_today()
-    accounts = list_accounts(current_user["sub"], budget_id, target_date)
+    accounts = list_accounts(current_user["sub"], budget_id, as_of)
     return {"has_accounts": len(accounts) > 0}
 
 

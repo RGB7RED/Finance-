@@ -18,6 +18,7 @@ MANUAL_ADJUST_REASON = "manual_adjust"
 TRANSFER_REASON = "transfer"
 RECONCILE_ADJUST_REASON = "reconcile_adjust"
 GOAL_TRANSFER_REASON = "goal_transfer"
+TRANSACTION_REASON = "transaction"
 
 
 def _ensure_budget_access(user_id: str, budget_id: str) -> None:
