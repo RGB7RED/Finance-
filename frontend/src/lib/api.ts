@@ -763,7 +763,12 @@ export const adjustGoal = async (
     note?: string | null;
     date?: string | null;
   },
-): Promise<{ goal: Goal; transaction: Transaction }> => {
+): Promise<{
+  status: "ok" | "noop";
+  detail: string;
+  applied_delta: number;
+  goal: Goal;
+}> => {
   if (!API_BASE_URL) {
     throw buildError("API недоступен");
   }
@@ -787,7 +792,12 @@ export const adjustGoal = async (
     throw buildError("Request failed", response.status, responseText);
   }
 
-  return (await response.json()) as { goal: Goal; transaction: Transaction };
+  return (await response.json()) as {
+    status: "ok" | "noop";
+    detail: string;
+    applied_delta: number;
+    goal: Goal;
+  };
 };
 
 export const deleteGoal = async (

@@ -30,7 +30,10 @@ def _get_goal_for_update(user_id: str, goal_id: str) -> dict[str, Any]:
     client = get_supabase_client()
     response = (
         client.table("goals")
-        .select("id, budget_id, user_id, title, target_amount, current_amount")
+        .select(
+            "id, budget_id, user_id, title, target_amount, current_amount,"
+            " deadline, status, created_at"
+        )
         .eq("id", goal_id)
         .execute()
     )
@@ -211,10 +214,12 @@ def adjust_goal_amount(
     next_amount = max(0, min(target_amount, current_amount + delta))
     applied_delta = next_amount - current_amount
     if applied_delta == 0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Цель уже достигла лимита",
-        )
+        return {
+            "status": "noop",
+            "detail": "goal_limit_reached",
+            "applied_delta": 0,
+            "goal": record,
+        }
 
     target_date_value = (
         _parse_payload_date(target_date) if target_date else date.today()
@@ -265,4 +270,9 @@ def adjust_goal_amount(
     goal_data = goal_response.data or []
     if not goal_data:
         raise RuntimeError("Failed to update goal in Supabase")
-    return {"goal": goal_data[0], "transaction": transaction}
+    return {
+        "status": "ok",
+        "detail": "applied",
+        "applied_delta": applied_delta,
+        "goal": goal_data[0],
+    }

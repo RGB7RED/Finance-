@@ -90,7 +90,7 @@ def adjust_goal(
     goal_id: str,
     payload: GoalAdjustRequest,
     current_user: dict = Depends(get_current_user),
-) -> dict[str, dict]:
+) -> dict[str, object]:
     result = adjust_goal_amount(
         current_user["sub"],
         goal_id,
