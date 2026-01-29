@@ -22,7 +22,6 @@ import {
   type CashflowDay,
   type Category,
   type DailyState,
-  type DailyStateAccount,
   type ExpensesByCategoryReport,
   type Goal,
   type MonthReport,
@@ -62,7 +61,6 @@ import {
   listTransactions,
   resetBudget,
   updateGoal,
-  updateDailyState,
 } from "../src/lib/api";
 import { clearToken, getToken, setToken } from "../src/lib/auth";
 import { formatRub } from "../src/lib/format";
@@ -150,19 +148,12 @@ export default function HomePage() {
   const [dailyState, setDailyState] = useState<DailyState | null>(null);
   const [reconcileSummary, setReconcileSummary] =
     useState<ReconcileSummary | null>(null);
-  const [dailyStateForm, setDailyStateForm] = useState({
-    debt_cards_total: "",
-    debt_other_total: "",
-  });
-  const [debtsDirty, setDebtsDirty] = useState({
-    creditCards: false,
-    peopleDebts: false,
-  });
-  const [dailyStateAccounts, setDailyStateAccounts] = useState<
-    (DailyStateAccount & { amountText: string; amount: number })[]
-  >([]);
   const [accountName, setAccountName] = useState("");
   const [accountKind, setAccountKind] = useState("cash");
+  const [accountActiveFrom, setAccountActiveFrom] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [accountInitialAmount, setAccountInitialAmount] = useState("0");
   const [categoryName, setCategoryName] = useState("");
   const [categoryParent, setCategoryParent] = useState("");
   const [selectedDate, setSelectedDate] = useState(() =>
@@ -216,6 +207,9 @@ export default function HomePage() {
   const [debtOtherDirection, setDebtOtherDirection] = useState<
     "borrowed" | "repaid"
   >("borrowed");
+  const [debtOtherType, setDebtOtherType] = useState<"people" | "cards">(
+    "people",
+  );
   const [debtOtherAccountId, setDebtOtherAccountId] = useState("");
   const [goalAccountId, setGoalAccountId] = useState("");
   const [goalTitle, setGoalTitle] = useState("");
@@ -237,78 +231,10 @@ export default function HomePage() {
     useState<FormErrorDetails | null>(null);
   const [debtOtherErrorDetails, setDebtOtherErrorDetails] =
     useState<FormErrorDetails | null>(null);
-  const [quickAdjustErrorDetails, setQuickAdjustErrorDetails] =
-    useState<FormErrorDetails | null>(null);
-  const [quickAdjustError, setQuickAdjustError] = useState<string | null>(null);
-  const [isQuickAdjusting, setIsQuickAdjusting] = useState(false);
 
   const setDailyStateFromData = (state: DailyState) => {
     setDailyState(state);
-    setDailyStateForm({
-      debt_cards_total: String(state.debts?.credit_cards ?? 0),
-      debt_other_total: String(state.debts?.people_debts ?? 0),
-    });
-    setDebtsDirty({ creditCards: false, peopleDebts: false });
-    setDailyStateAccounts(
-      state.accounts.map((account) => ({
-        ...account,
-        amount: account.amount ?? 0,
-        amountText: String(account.amount ?? 0),
-      })),
-    );
   };
-
-  const parseAmountFromText = (value: string): number | null => {
-    const normalized = value.replace(/[\s\u00a0]/g, "").replace(/[^\d-]+/g, "");
-    const match = normalized.match(/-?\d+/);
-    if (!match) {
-      return null;
-    }
-    const parsed = Number.parseInt(match[0], 10);
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-
-  const parseAmount = (value: string): number =>
-    parseAmountFromText(value) ?? 0;
-
-  const parseAmountOrNull = (value: string): number | null => {
-    if (!value.trim()) {
-      return null;
-    }
-    return parseAmountFromText(value);
-  };
-
-  const buildDebtsPayload = () => {
-    if (!debtsDirty.creditCards && !debtsDirty.peopleDebts) {
-      return undefined;
-    }
-    const creditCards = parseAmountOrNull(dailyStateForm.debt_cards_total);
-    const peopleDebts = parseAmountOrNull(dailyStateForm.debt_other_total);
-    if (creditCards === null && peopleDebts === null) {
-      return undefined;
-    }
-    const debts: { credit_cards?: number; people_debts?: number } = {};
-    if (debtsDirty.creditCards && creditCards !== null) {
-      debts.credit_cards = creditCards;
-    }
-    if (debtsDirty.peopleDebts && peopleDebts !== null) {
-      debts.people_debts = peopleDebts;
-    }
-    return Object.keys(debts).length ? debts : undefined;
-  };
-
-  const getAccountCurrentValue = (
-    account: DailyStateAccount & { amountText: string; amount: number },
-  ): number => {
-    return account.amount ?? 0;
-  };
-
-  const buildQuickAdjustInsufficientMessage = (
-    currentValue: number,
-    delta: number,
-    nextValue: number,
-  ) =>
-    `Недостаточно средств: текущий остаток ${currentValue} ₽, нужно изменить на ${delta} ₽, получится ${nextValue} ₽`;
 
   const loadDailyStateData = async (
     authToken: string,
@@ -537,7 +463,7 @@ export default function HomePage() {
           loadedGoals,
           loadedRules,
         ] = await Promise.all([
-          listAccounts(resolvedToken, nextBudgetId),
+          listAccounts(resolvedToken, nextBudgetId, selectedDate),
           listCategories(resolvedToken, nextBudgetId),
           listTransactions(resolvedToken, nextBudgetId, selectedDate),
           listGoals(resolvedToken, nextBudgetId),
@@ -580,13 +506,11 @@ export default function HomePage() {
     setReportSummary(null);
     setMonthReport(null);
     setSelectedMonth(getDefaultMonth());
-    setDailyStateForm({
-      debt_cards_total: "",
-      debt_other_total: "",
-    });
-    setDailyStateAccounts([]);
+    setAccountActiveFrom(new Date().toISOString().slice(0, 10));
+    setAccountInitialAmount("0");
     setDebtOtherAmount("");
     setDebtOtherDirection("borrowed");
+    setDebtOtherType("people");
     setDebtOtherAccountId("");
     setGoalTitle("");
     setGoalTargetAmount("");
@@ -685,38 +609,9 @@ export default function HomePage() {
     }, 0);
   }, [transactions]);
 
-  const cashTotal = useMemo(() => {
-    return dailyStateAccounts.reduce((total, account) => {
-      if (account.kind === "cash") {
-        return total + parseAmount(account.amountText);
-      }
-      return total;
-    }, 0);
-  }, [dailyStateAccounts]);
-
-  const noncashTotal = useMemo(() => {
-    return dailyStateAccounts.reduce((total, account) => {
-      if (account.kind === "bank") {
-        return total + parseAmount(account.amountText);
-      }
-      return total;
-    }, 0);
-  }, [dailyStateAccounts]);
-
-  const assetsTotal = useMemo(() => {
-    return cashTotal + noncashTotal;
-  }, [cashTotal, noncashTotal]);
-
-  const debtsTotal = useMemo(() => {
-    return (
-      parseAmount(dailyStateForm.debt_cards_total) +
-      parseAmount(dailyStateForm.debt_other_total)
-    );
-  }, [dailyStateForm.debt_cards_total, dailyStateForm.debt_other_total]);
-
-  const balanceTotal = useMemo(() => {
-    return assetsTotal - debtsTotal;
-  }, [assetsTotal, debtsTotal]);
+  const assetsTotal = dailyState?.totals.assets_total ?? 0;
+  const debtsTotal = dailyState?.totals.debts_total ?? 0;
+  const balanceTotal = dailyState?.totals.balance_total ?? 0;
 
   const normalizeGoalRemaining = (goal: Goal) =>
     Math.max(0, goal.target_amount - goal.current_amount);
@@ -746,10 +641,6 @@ export default function HomePage() {
   const bottomDayTotal = reconcileSummary?.bottom_total ?? dailyTotal;
   const reconcileDiff = reconcileSummary?.diff ?? 0;
   const reconcileDiffAbs = Math.abs(reconcileDiff);
-  const isReconciled = reconcileSummary?.is_ok ?? true;
-  const deltaToApply = -reconcileDiff;
-  const isReconciledOrClose = isReconciled || Math.abs(deltaToApply) <= 1;
-  const shouldShowQuickAdjust = Math.abs(deltaToApply) > 1;
   const renderMonthReconcileStatus = (diff: number) => {
     if (Math.abs(diff) <= 1) {
       return <Pill variant="ok" text="OK" />;
@@ -765,17 +656,6 @@ export default function HomePage() {
   const monthNetTotal = monthReport?.month_net ?? 0;
   const monthAvgNet = monthReport?.avg_net_per_day ?? 0;
   const hasAccounts = accounts.length > 0;
-  const orderedDailyStateAccounts = useMemo(() => {
-    const order: Record<string, number> = { bank: 0, cash: 1 };
-    return [...dailyStateAccounts].sort((first, second) => {
-      const orderDiff =
-        (order[first.kind] ?? 99) - (order[second.kind] ?? 99);
-      if (orderDiff !== 0) {
-        return orderDiff;
-      }
-      return first.name.localeCompare(second.name);
-    });
-  }, [dailyStateAccounts]);
 
   const renderCategoryTree = (parentId: string | null) => {
     const key = parentId ?? "root";
@@ -811,7 +691,7 @@ export default function HomePage() {
         loadedGoals,
         loadedRules,
       ] = await Promise.all([
-        listAccounts(token, nextBudgetId),
+        listAccounts(token, nextBudgetId, selectedDate),
         listCategories(token, nextBudgetId),
         listTransactions(token, nextBudgetId, selectedDate),
         listGoals(token, nextBudgetId),
@@ -836,12 +716,12 @@ export default function HomePage() {
         return;
       }
       try {
-        const loadedTransactions = await listTransactions(
-          token,
-          activeBudgetId,
-          selectedDate,
-        );
+        const [loadedAccounts, loadedTransactions] = await Promise.all([
+          listAccounts(token, activeBudgetId, selectedDate),
+          listTransactions(token, activeBudgetId, selectedDate),
+        ]);
         await loadDailyStateData(token, activeBudgetId, selectedDate);
+        setAccounts(loadedAccounts);
         setTransactions(loadedTransactions);
       } catch (error) {
         setMessage(buildErrorMessage("Не удалось загрузить операции", error));
@@ -947,6 +827,15 @@ export default function HomePage() {
     if (!token || !activeBudgetId) {
       return;
     }
+    const initialAmount = Number.parseInt(accountInitialAmount, 10);
+    if (!accountActiveFrom) {
+      setMessage("Укажите дату активации");
+      return;
+    }
+    if (!Number.isFinite(initialAmount) || initialAmount < 0) {
+      setMessage("Начальный остаток не может быть отрицательным");
+      return;
+    }
     setMessage("");
     setAccountErrorDetails(null);
     try {
@@ -954,9 +843,16 @@ export default function HomePage() {
         budget_id: activeBudgetId,
         name: accountName,
         kind: accountKind,
+        active_from: accountActiveFrom,
+        initial_amount: initialAmount,
       });
       setAccountName("");
-      const updatedAccounts = await listAccounts(token, activeBudgetId);
+      setAccountInitialAmount("0");
+      const updatedAccounts = await listAccounts(
+        token,
+        activeBudgetId,
+        selectedDate,
+      );
       setAccounts(updatedAccounts);
       await loadDailyStateData(token, activeBudgetId, selectedDate);
     } catch (error) {
@@ -1219,12 +1115,13 @@ export default function HomePage() {
         budget_id: activeBudgetId,
         amount,
         direction: debtOtherDirection,
+        debt_type: debtOtherType,
         account_id: debtOtherAccountId,
         date: selectedDate,
       });
       setDebtOtherAmount("");
       const [updatedAccounts] = await Promise.all([
-        listAccounts(token, activeBudgetId),
+        listAccounts(token, activeBudgetId, selectedDate),
         loadDailyStateData(token, activeBudgetId, selectedDate),
       ]);
       setAccounts(updatedAccounts);
@@ -1358,163 +1255,6 @@ export default function HomePage() {
     }
   };
 
-  const handleDailyStateChange = (
-    field: keyof typeof dailyStateForm,
-    value: string,
-  ) => {
-    const parsedValue = parseAmountOrNull(value);
-    if (parsedValue !== null && parsedValue < 0) {
-      return;
-    }
-    setDailyStateForm((prev) => ({ ...prev, [field]: value }));
-    setDebtsDirty((prev) => ({
-      ...prev,
-      ...(field === "debt_cards_total" ? { creditCards: true } : {}),
-      ...(field === "debt_other_total" ? { peopleDebts: true } : {}),
-    }));
-  };
-
-  const handleDailyStateAccountChange = (
-    accountId: string,
-    value: string,
-  ) => {
-    const parsedValue = parseAmountOrNull(value);
-    if (parsedValue !== null && parsedValue < 0) {
-      return;
-    }
-    setDailyStateAccounts((prev) =>
-      prev.map((account) =>
-        account.account_id === accountId
-          ? {
-              ...account,
-              amountText: value,
-            }
-          : account,
-      ),
-    );
-  };
-
-  const handleSaveDailyState = async () => {
-    if (!token || !activeBudgetId) {
-      return;
-    }
-    setMessage("");
-    try {
-      const debts = buildDebtsPayload();
-      const payload = {
-        budget_id: activeBudgetId,
-        date: selectedDate,
-        accounts: dailyStateAccounts.map((account) => ({
-          account_id: account.account_id,
-          amount: parseAmount(account.amountText),
-        })),
-        debts,
-      };
-      const updated = await updateDailyState(token, payload);
-      setDailyStateFromData(updated);
-      await loadDailyStateData(token, activeBudgetId, selectedDate);
-      await loadReports();
-    } catch (error) {
-      setMessage(buildErrorMessage("Не удалось сохранить состояние дня", error));
-    }
-  };
-
-  const handleQuickAdjust = async (accountId: string, delta: number) => {
-    const clickStamp = new Date().toISOString();
-    console.log("[quick-adjust] click", {
-      clickStamp,
-      accountId,
-      delta,
-    });
-    if (!activeBudgetId || !selectedDate || !accountId) {
-      setQuickAdjustErrorDetails(null);
-      setQuickAdjustError("missing budget/date/account");
-      return;
-    }
-    if (!token) {
-      console.log("[quick-adjust] guard: missing token/budget", {
-        tokenMissing: !token,
-        activeBudgetMissing: !activeBudgetId,
-      });
-      setQuickAdjustErrorDetails(null);
-      setQuickAdjustError("missing auth token");
-      return;
-    }
-    if (isQuickAdjusting) {
-      console.log("[quick-adjust] guard: isQuickAdjusting", {
-        isQuickAdjusting,
-      });
-      return;
-    }
-    const currentAccount = dailyStateAccounts.find(
-      (account) => account.account_id === accountId,
-    );
-    if (!currentAccount) {
-      setQuickAdjustErrorDetails(null);
-      setQuickAdjustError("missing budget/date/account");
-      return;
-    }
-    const currentValue = currentAccount.amount ?? 0;
-    const nextValue = currentValue + delta;
-    if (nextValue < 0) {
-      const message = buildQuickAdjustInsufficientMessage(
-        currentValue,
-        delta,
-        nextValue,
-      );
-      console.log("[quick-adjust] guard: nextValue < 0", {
-        currentValue,
-        nextValue,
-        delta,
-      });
-      setQuickAdjustErrorDetails(null);
-      setQuickAdjustError(message);
-      return;
-    }
-    const updatedAccounts = dailyStateAccounts.map((account) =>
-      account.account_id === accountId
-        ? { ...account, amountText: String(nextValue), amount: nextValue }
-        : account,
-    );
-    setDailyStateAccounts(updatedAccounts);
-    setMessage("");
-    setQuickAdjustErrorDetails(null);
-    setQuickAdjustError(null);
-    setIsQuickAdjusting(true);
-    try {
-      const debts = buildDebtsPayload();
-      console.log("[quick-adjust] sending update", {
-        budgetId: activeBudgetId,
-        date: selectedDate,
-        accountId,
-        nextValue,
-      });
-      await updateDailyState(token, {
-        budget_id: activeBudgetId,
-        date: selectedDate,
-        accounts: updatedAccounts.map((account) => ({
-          account_id: account.account_id,
-          amount: parseAmount(account.amountText),
-        })),
-        debts,
-      });
-      console.log("[quick-adjust] updateDailyState ok");
-      await loadDailyStateData(token, activeBudgetId, selectedDate);
-      await loadReports();
-    } catch (error) {
-      const apiError = error as Error & { status?: number; text?: string };
-      setQuickAdjustErrorDetails({
-        httpStatus: apiError.status,
-        responseText: apiError.text,
-      });
-      setQuickAdjustError(apiError.message || String(error));
-      setMessage(buildErrorMessage("Не удалось обновить состояние дня", error));
-    } finally {
-      console.log("[quick-adjust] finally: reset isQuickAdjusting");
-      setIsQuickAdjusting(false);
-    }
-  };
-
   const handleResetBudget = async () => {
     if (!token || !activeBudgetId) {
       return;
@@ -1535,7 +1275,7 @@ export default function HomePage() {
         loadedGoals,
         loadedRules,
       ] = await Promise.all([
-        listAccounts(token, activeBudgetId),
+        listAccounts(token, activeBudgetId, selectedDate),
         listCategories(token, activeBudgetId),
         listTransactions(token, activeBudgetId, selectedDate),
         listGoals(token, activeBudgetId),
@@ -1707,60 +1447,6 @@ export default function HomePage() {
         </Card>
       </div>
 
-      <Card title="Состояние дня">
-        {!hasAccounts ? (
-          <p>Создайте хотя бы один счёт, чтобы вести операции.</p>
-        ) : (
-          <div className="mf-stack">
-            <div className="mf-stack mf-day-accounts">
-              {orderedDailyStateAccounts.map((account) => (
-                <div
-                  key={account.account_id}
-                  className="mf-row"
-                  style={{ justifyContent: "space-between", width: "100%" }}
-                >
-                  <div>
-                    <div>{account.name}</div>
-                    <div className="mf-small">{account.kind}</div>
-                  </div>
-                  <Input
-                    type="number"
-                    value={account.amountText}
-                    onChange={(event) =>
-                      handleDailyStateAccountChange(
-                        account.account_id,
-                        event.target.value,
-                      )
-                    }
-                  />
-                </div>
-              ))}
-            </div>
-            <div className="mf-row">
-              <Input
-                label="Кредитки/рассрочки"
-                type="number"
-                value={dailyStateForm.debt_cards_total}
-                onChange={(event) =>
-                  handleDailyStateChange("debt_cards_total", event.target.value)
-                }
-              />
-              <Input
-                label="Долги людям"
-                type="number"
-                value={dailyStateForm.debt_other_total}
-                onChange={(event) =>
-                  handleDailyStateChange("debt_other_total", event.target.value)
-                }
-              />
-            </div>
-            <Button onClick={handleSaveDailyState}>
-              Сохранить состояние
-            </Button>
-          </div>
-        )}
-      </Card>
-
       <Card
         title="Сверка"
         right={
@@ -1802,52 +1488,6 @@ export default function HomePage() {
                 </tr>
               </tbody>
             </table>
-            {shouldShowQuickAdjust && (
-              <div className="mf-stack">
-                {orderedDailyStateAccounts.map((account) => {
-                  const currentValue = getAccountCurrentValue(account);
-                  const nextValue = currentValue + deltaToApply;
-                  const isInsufficient = nextValue < 0;
-                  const insufficientMessage =
-                    buildQuickAdjustInsufficientMessage(
-                      currentValue,
-                      deltaToApply,
-                      nextValue,
-                    );
-                  return (
-                    <div key={account.account_id} className="mf-stack">
-                      <Button
-                        variant="secondary"
-                        onClick={() =>
-                          handleQuickAdjust(account.account_id, deltaToApply)
-                        }
-                        disabled={isQuickAdjusting || isInsufficient}
-                        title={isInsufficient ? insufficientMessage : undefined}
-                      >
-                        {isQuickAdjusting
-                          ? "Применяю…"
-                          : `Изменить ${account.name} на ${formatRub(
-                              deltaToApply,
-                            )}`}
-                      </Button>
-                      {isInsufficient && <p>{insufficientMessage}</p>}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {quickAdjustErrorDetails && (
-              <div>
-                <p>
-                  http_status: {quickAdjustErrorDetails.httpStatus ?? "unknown"}
-                </p>
-                <p>
-                  response_text:{" "}
-                  {quickAdjustErrorDetails.responseText ?? "unknown"}
-                </p>
-              </div>
-            )}
-            {quickAdjustError && <p>{quickAdjustError}</p>}
           </div>
         )}
       </Card>
@@ -2152,9 +1792,22 @@ export default function HomePage() {
         )}
       </Card>
 
-      <Card title="Долги людям">
+      <Card title="Долги">
         {!hasAccounts && <p>Сначала добавьте хотя бы один счёт.</p>}
         <form className="mf-stack" onSubmit={handleCreateDebtOther}>
+          <label className="mf-input">
+            <span className="mf-input__label">Тип долга</span>
+            <select
+              className="mf-select"
+              value={debtOtherType}
+              onChange={(event) =>
+                setDebtOtherType(event.target.value as "people" | "cards")
+              }
+            >
+              <option value="people">Долги людям</option>
+              <option value="cards">Кредитки/рассрочки</option>
+            </select>
+          </label>
           <label className="mf-input">
             <span className="mf-input__label">Направление</span>
             <select
@@ -2760,6 +2413,21 @@ export default function HomePage() {
             type="text"
             value={accountName}
             onChange={(event) => setAccountName(event.target.value)}
+            required
+          />
+          <Input
+            label="Активен с даты"
+            type="date"
+            value={accountActiveFrom}
+            onChange={(event) => setAccountActiveFrom(event.target.value)}
+            required
+          />
+          <Input
+            label="Начальный остаток"
+            type="number"
+            value={accountInitialAmount}
+            onChange={(event) => setAccountInitialAmount(event.target.value)}
+            min={0}
             required
           />
           <label className="mf-input">

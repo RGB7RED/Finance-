@@ -140,6 +140,7 @@ export type Account = {
   name: string;
   kind: string;
   currency: string | null;
+  active_from: string;
   created_at: string;
 };
 
@@ -326,8 +327,12 @@ export const listBudgets = async (token: string): Promise<Budget[]> =>
 export const listAccounts = async (
   token: string,
   budgetId: string,
+  asOf?: string,
 ): Promise<Account[]> => {
   const query = new URLSearchParams({ budget_id: budgetId });
+  if (asOf) {
+    query.set("as_of", asOf);
+  }
   return requestJson(`/accounts?${query.toString()}`, {
     headers: authHeaders(token),
   });
@@ -345,7 +350,13 @@ export const getAccountsExists = async (
 
 export const createAccount = async (
   token: string,
-  payload: { budget_id: string; name: string; kind: string },
+  payload: {
+    budget_id: string;
+    name: string;
+    kind: string;
+    active_from: string;
+    initial_amount: number;
+  },
 ): Promise<Account> => {
   if (!API_BASE_URL) {
     throw buildError("API недоступен");
@@ -569,41 +580,6 @@ export const getDailyState = async (
   });
 };
 
-export const updateDailyState = async (
-  token: string,
-  payload: {
-    budget_id: string;
-    date: string;
-    accounts: { account_id: string; amount: number }[];
-    debts?: { credit_cards?: number; people_debts?: number };
-  },
-): Promise<DailyState> => {
-  if (!API_BASE_URL) {
-    throw buildError("API недоступен");
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE_URL}/daily-state`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...authHeaders(token),
-      },
-      body: JSON.stringify(payload),
-    });
-  } catch (error) {
-    throw buildError("API недоступен");
-  }
-
-  if (!response.ok) {
-    const responseText = await response.text();
-    throw buildError("Request failed", response.status, responseText);
-  }
-
-  return (await response.json()) as DailyState;
-};
-
 export const getDailyDelta = async (
   token: string,
   budgetId: string,
@@ -632,6 +608,7 @@ export const createDebtOther = async (
     budget_id: string;
     amount: number;
     direction: "borrowed" | "repaid";
+    debt_type: "people" | "cards";
     account_id: string;
     date?: string;
   },

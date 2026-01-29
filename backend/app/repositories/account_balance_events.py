@@ -95,7 +95,7 @@ def get_balances_as_of(
     user_id: str, budget_id: str, target_date: date
 ) -> dict[str, int]:
     _ensure_budget_access(user_id, budget_id)
-    accounts = list_accounts(user_id, budget_id)
+    accounts = list_accounts(user_id, budget_id, target_date)
     events = list_balance_events(user_id, budget_id, date_to=target_date)
     balances: dict[str, int] = {account["id"]: 0 for account in accounts}
     for event in events:
@@ -125,7 +125,7 @@ def has_balance_events_as_of(
 def get_accounts_with_balances(
     user_id: str, budget_id: str, target_date: date
 ) -> list[dict[str, Any]]:
-    accounts = list_accounts(user_id, budget_id)
+    accounts = list_accounts(user_id, budget_id, target_date)
     balances = get_balances_as_of(user_id, budget_id, target_date)
     return [
         {
