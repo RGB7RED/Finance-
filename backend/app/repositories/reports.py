@@ -10,7 +10,7 @@ from app.repositories.accounts import list_accounts
 from app.repositories.account_balance_events import list_balance_events
 from app.repositories.daily_state import (
     get_balance_for_date,
-    get_state_or_default,
+    get_state_as_of,
 )
 
 
@@ -189,7 +189,7 @@ def balance_by_day(
 
 def summary(user_id: str, budget_id: str) -> dict[str, Any]:
     today = datetime.now(timezone.utc).date()
-    daily_state = get_state_or_default(user_id, budget_id, today)
+    daily_state = get_state_as_of(user_id, budget_id, today)
     client = get_supabase_client()
     response = (
         client.table("goals")
