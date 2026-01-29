@@ -16,6 +16,9 @@ from app.repositories.budgets import (
 )
 from app.repositories.categories import create_category, list_categories
 from app.repositories.account_balance_events import (
+    calculate_totals,
+    get_account_balance_as_of,
+    get_balances_as_of,
     upsert_manual_adjust_event,
 )
 from app.repositories.daily_state import (
@@ -24,11 +27,6 @@ from app.repositories.daily_state import (
     get_debts_as_of,
     get_delta,
     upsert_debts,
-)
-from app.repositories.daily_account_balances import (
-    calculate_totals,
-    get_balances_as_of,
-    upsert_balances,
 )
 from app.repositories.debts_other import (
     delete_debt_other,
@@ -394,10 +392,9 @@ def post_debts_other(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Счет не найден для бюджета",
         )
-    balances_as_of = get_balances_as_of(
-        current_user["sub"], payload.budget_id, target_date
+    current_amount = get_account_balance_as_of(
+        current_user["sub"], payload.budget_id, target_date, payload.account_id
     )
-    current_amount = int(balances_as_of.get(payload.account_id, 0))
     delta = payload.amount if payload.direction == "borrowed" else -payload.amount
     next_amount = current_amount + delta
     if next_amount < 0:
@@ -423,11 +420,12 @@ def post_debts_other(
         credit_cards=int(debts_record.get("debt_cards_total", 0)),
         people_debts=debt_other_total,
     )
-    upsert_balances(
+    upsert_manual_adjust_event(
         current_user["sub"],
         payload.budget_id,
         target_date,
-        [{"account_id": payload.account_id, "amount": next_amount}],
+        payload.account_id,
+        next_amount,
     )
     return _build_daily_state_response(
         current_user["sub"], payload.budget_id, target_date
