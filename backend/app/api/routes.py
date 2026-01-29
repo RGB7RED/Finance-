@@ -105,8 +105,8 @@ class DailyStateAccountUpdate(BaseModel):
 
 
 class DailyStateDebts(BaseModel):
-    credit_cards: int = Field(ge=0, default=0)
-    people_debts: int = Field(ge=0, default=0)
+    credit_cards: Optional[int] = Field(ge=0, default=None)
+    people_debts: Optional[int] = Field(ge=0, default=None)
 
 
 class DailyStateTotals(BaseModel):
@@ -488,13 +488,17 @@ def put_daily_state(
             len(result),
         )
         if payload.debts is not None:
-            upsert_debts(
-                user_id,
-                payload.budget_id,
-                payload.date,
-                credit_cards=payload.debts.credit_cards,
-                people_debts=payload.debts.people_debts,
-            )
+            if (
+                payload.debts.credit_cards is not None
+                or payload.debts.people_debts is not None
+            ):
+                upsert_debts(
+                    user_id,
+                    payload.budget_id,
+                    payload.date,
+                    credit_cards=payload.debts.credit_cards,
+                    people_debts=payload.debts.people_debts,
+                )
         logger.info("daily_state_update success")
     except HTTPException as exc:
         logger.error(

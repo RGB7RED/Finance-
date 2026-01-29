@@ -573,7 +573,7 @@ export const updateDailyState = async (
     budget_id: string;
     date: string;
     accounts: { account_id: string; amount: number }[];
-    debts?: { credit_cards: number; people_debts: number };
+    debts?: { credit_cards?: number; people_debts?: number };
   },
 ): Promise<DailyState> => {
   if (!API_BASE_URL) {

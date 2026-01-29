@@ -169,11 +169,20 @@ def upsert_debts(
     people_debts: int | None = None,
 ) -> dict[str, Any]:
     _ensure_budget_access(user_id, budget_id)
-    existing = get_state(user_id, budget_id, target_date) or {}
-    cash_total = int(existing.get("cash_total", 0))
-    bank_total = int(existing.get("bank_total", 0))
-    debt_cards_total = int(existing.get("debt_cards_total", 0))
-    debt_other_total = int(existing.get("debt_other_total", 0))
+    existing_for_date = get_state(user_id, budget_id, target_date) or {}
+    debts_as_of = get_debts_as_of(user_id, budget_id, target_date)
+    cash_total = int(existing_for_date.get("cash_total", 0))
+    bank_total = int(existing_for_date.get("bank_total", 0))
+    debt_cards_total = int(
+        existing_for_date.get(
+            "debt_cards_total", debts_as_of.get("debt_cards_total", 0)
+        )
+    )
+    debt_other_total = int(
+        existing_for_date.get(
+            "debt_other_total", debts_as_of.get("debt_other_total", 0)
+        )
+    )
     if credit_cards is not None:
         debt_cards_total = int(credit_cards)
     if people_debts is not None:
