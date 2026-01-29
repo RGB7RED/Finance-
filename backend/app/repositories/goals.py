@@ -230,6 +230,22 @@ def adjust_goal_amount(
     note_prefix = f"Goal: {record.get('title')} ({sign}{amount})"
     tx_note = f"{note_prefix} — {note}" if note else note_prefix
 
+    transaction = create_transaction(
+        user_id,
+        {
+            "budget_id": budget_id,
+            "type": direction,
+            "kind": "goal_transfer",
+            "amount": amount,
+            "date": target_date_value.isoformat(),
+            "account_id": account_id,
+            "category_id": None,
+            "goal_id": goal_id,
+            "tag": "one_time",
+            "note": tx_note,
+        },
+    )
+
     client = get_supabase_client()
     try:
         goal_response = (
@@ -239,33 +255,17 @@ def adjust_goal_amount(
             .execute()
         )
     except APIError as exc:
+        try:
+            client.table("transactions").delete().eq(
+                "id", transaction.get("id")
+            ).execute()
+        except Exception:
+            pass
         detail = getattr(exc, "message", None) or str(exc)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=detail,
         ) from exc
-
-    try:
-        transaction = create_transaction(
-            user_id,
-            {
-                "budget_id": budget_id,
-                "type": direction,
-                "kind": "goal_transfer",
-                "amount": amount,
-                "date": target_date_value.isoformat(),
-                "account_id": account_id,
-                "category_id": None,
-                "goal_id": goal_id,
-                "tag": "one_time",
-                "note": tx_note,
-            },
-        )
-    except HTTPException:
-        client.table("goals").update({"current_amount": current_amount}).eq(
-            "id", goal_id
-        ).execute()
-        raise
 
     goal_data = goal_response.data or []
     if not goal_data:
