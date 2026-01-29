@@ -73,20 +73,18 @@ create table if not exists public.rules (
     budget_id uuid not null references public.budgets(id) on delete cascade,
     user_id uuid not null references public.users(id) on delete cascade,
     pattern text not null,
-    match_type text not null default 'contains' check (match_type in ('contains')),
     account_id uuid null references public.accounts(id) on delete set null,
     category_id uuid null references public.categories(id) on delete set null,
-    tag text null check (tag in ('one_time', 'subscription')),
-    hits integer not null default 0,
-    accepts integer not null default 0,
-    confidence numeric not null default 0.0,
+    tag text not null check (tag in ('one_time', 'subscription')),
     created_at timestamptz not null default now(),
-    check (
-        account_id is not null
-        or category_id is not null
-        or tag is not null
-    )
+    updated_at timestamptz not null default now()
 );
+
+create index if not exists rules_budget_user_idx
+    on public.rules (budget_id, user_id);
+
+create index if not exists rules_budget_user_pattern_idx
+    on public.rules (budget_id, user_id, pattern);
 
 create table if not exists public.daily_state (
     id uuid primary key default gen_random_uuid(),
