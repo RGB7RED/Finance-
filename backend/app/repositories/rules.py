@@ -8,7 +8,6 @@ from postgrest.exceptions import APIError
 
 from app.integrations.supabase_client import get_supabase_client
 
-MATCH_TYPE_CONTAINS = "contains"
 ALLOWED_TAGS = {"one_time", "subscription"}
 
 
@@ -60,19 +59,12 @@ def _ensure_category_in_budget(budget_id: str, category_id: str) -> None:
         )
 
 
-def _ensure_target_present(
-    account_id: str | None, category_id: str | None, tag: str | None
-) -> None:
-    if not any([account_id, category_id, tag]):
+def _normalize_tag(tag: str | None) -> str:
+    if not tag:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="At least one target must be provided",
+            detail="tag is required",
         )
-
-
-def _normalize_tag(tag: str | None) -> str | None:
-    if tag is None:
-        return None
     if tag not in ALLOWED_TAGS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -81,30 +73,14 @@ def _normalize_tag(tag: str | None) -> str | None:
     return tag
 
 
-def _extract_pattern(note: str) -> str | None:
-    cleaned_note = note.strip().lower()
-    if not cleaned_note:
-        return None
-    for raw_word in cleaned_note.split():
-        word = raw_word.strip(".,!?;:\"'()[]{}")
-        if len(word) >= 4:
-            return word
-    return None
-
-
-def _recalculate_confidence(hits: int, accepts: int) -> float:
-    safe_hits = max(hits, 1)
-    return float(accepts) / float(safe_hits)
-
-
 def list_rules(user_id: str, budget_id: str) -> list[dict[str, Any]]:
     _ensure_budget_access(user_id, budget_id)
     client = get_supabase_client()
     response = (
         client.table("rules")
         .select(
-            "id, budget_id, user_id, pattern, match_type, account_id, "
-            "category_id, tag, hits, accepts, confidence, created_at"
+            "id, budget_id, user_id, pattern, account_id, category_id, tag, "
+            "created_at, updated_at"
         )
         .eq("budget_id", budget_id)
         .eq("user_id", user_id)
@@ -114,35 +90,23 @@ def list_rules(user_id: str, budget_id: str) -> list[dict[str, Any]]:
     return response.data or []
 
 
-def create_rule(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    budget_id = payload.get("budget_id")
-    if not budget_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="budget_id is required",
-        )
-
+def create_rule(
+    user_id: str,
+    budget_id: str,
+    pattern: str,
+    account_id: str | None,
+    category_id: str | None,
+    tag: str,
+) -> dict[str, Any]:
     _ensure_budget_access(user_id, budget_id)
 
-    pattern = payload.get("pattern")
     if not pattern or not str(pattern).strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="pattern is required",
         )
 
-    match_type = payload.get("match_type", MATCH_TYPE_CONTAINS)
-    if match_type != MATCH_TYPE_CONTAINS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only contains match_type is supported",
-        )
-
-    account_id = payload.get("account_id")
-    category_id = payload.get("category_id")
-    tag = _normalize_tag(payload.get("tag"))
-
-    _ensure_target_present(account_id, category_id, tag)
+    normalized_tag = _normalize_tag(tag)
 
     if account_id:
         _ensure_account_in_budget(budget_id, account_id)
@@ -153,10 +117,9 @@ def create_rule(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         {
             "budget_id": budget_id,
             "pattern": str(pattern).strip().lower(),
-            "match_type": match_type,
             "account_id": account_id,
             "category_id": category_id,
-            "tag": tag,
+            "tag": normalized_tag,
         }
     )
 
@@ -178,18 +141,19 @@ def create_rule(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     raise RuntimeError("Failed to create rule in Supabase")
 
 
-def delete_rule(user_id: str, rule_id: str) -> None:
+def delete_rule(user_id: str, budget_id: str, rule_id: str) -> None:
+    _ensure_budget_access(user_id, budget_id)
     client = get_supabase_client()
     existing = (
         client.table("rules")
-        .select("id, user_id")
+        .select("id, user_id, budget_id")
         .eq("id", rule_id)
         .execute()
     )
     data = existing.data or []
     if not data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    if data[0]["user_id"] != user_id:
+    if data[0]["user_id"] != user_id or data[0]["budget_id"] != budget_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Rule does not belong to user",
@@ -198,33 +162,25 @@ def delete_rule(user_id: str, rule_id: str) -> None:
     client.table("rules").delete().eq("id", rule_id).execute()
 
 
-def suggest(user_id: str, budget_id: str, note: str) -> dict[str, Any]:
+def apply_rules(user_id: str, budget_id: str, text: str) -> dict[str, Any]:
     _ensure_budget_access(user_id, budget_id)
 
-    if not note or not note.strip():
-        return {
-            "account_id": None,
-            "category_id": None,
-            "tag": None,
-            "confidence": 0.0,
-            "pattern": None,
-        }
+    if not text or not text.strip():
+        return {"account_id": None, "category_id": None, "tag": None}
 
-    note_lower = note.lower()
+    note_lower = text.lower()
     client = get_supabase_client()
     response = (
         client.table("rules")
-        .select(
-            "id, pattern, match_type, account_id, category_id, tag, hits, "
-            "accepts, confidence"
-        )
+        .select("id, pattern, account_id, category_id, tag")
         .eq("budget_id", budget_id)
         .eq("user_id", user_id)
         .execute()
     )
     rules = response.data or []
+
     best_rule: dict[str, Any] | None = None
-    best_confidence = 0.0
+    best_length = -1
 
     for rule in rules:
         pattern = (rule.get("pattern") or "").lower()
@@ -232,117 +188,16 @@ def suggest(user_id: str, budget_id: str, note: str) -> dict[str, Any]:
             continue
         if pattern not in note_lower:
             continue
-        hits = int(rule.get("hits") or 0)
-        accepts = int(rule.get("accepts") or 0)
-        confidence = _recalculate_confidence(hits, accepts)
-        if confidence > best_confidence:
-            best_confidence = confidence
+        pattern_length = len(pattern)
+        if pattern_length > best_length:
+            best_length = pattern_length
             best_rule = rule
 
     if not best_rule:
-        return {
-            "account_id": None,
-            "category_id": None,
-            "tag": None,
-            "confidence": 0.0,
-            "pattern": None,
-        }
+        return {"account_id": None, "category_id": None, "tag": None}
 
     return {
         "account_id": best_rule.get("account_id"),
         "category_id": best_rule.get("category_id"),
         "tag": best_rule.get("tag"),
-        "confidence": best_confidence,
-        "pattern": best_rule.get("pattern"),
     }
-
-
-def feedback(
-    user_id: str,
-    budget_id: str,
-    note: str,
-    accepted: bool,
-    account_id: str | None,
-    category_id: str | None,
-    tag: str | None,
-) -> dict[str, Any]:
-    _ensure_budget_access(user_id, budget_id)
-
-    pattern = _extract_pattern(note)
-    if not pattern:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Unable to derive pattern from note",
-        )
-
-    tag = _normalize_tag(tag)
-    _ensure_target_present(account_id, category_id, tag)
-
-    if account_id:
-        _ensure_account_in_budget(budget_id, account_id)
-    if category_id:
-        _ensure_category_in_budget(budget_id, category_id)
-
-    client = get_supabase_client()
-    query = (
-        client.table("rules")
-        .select(
-            "id, hits, accepts, account_id, category_id, tag, pattern, match_type"
-        )
-        .eq("budget_id", budget_id)
-        .eq("user_id", user_id)
-        .eq("pattern", pattern)
-        .eq("match_type", MATCH_TYPE_CONTAINS)
-    )
-    if account_id:
-        query = query.eq("account_id", account_id)
-    else:
-        query = query.is_("account_id", "null")
-    if category_id:
-        query = query.eq("category_id", category_id)
-    else:
-        query = query.is_("category_id", "null")
-    if tag:
-        query = query.eq("tag", tag)
-    else:
-        query = query.is_("tag", "null")
-    existing = query.execute().data or []
-
-    rule: dict[str, Any]
-    if existing:
-        rule = existing[0]
-    else:
-        insert_payload = jsonable_encoder(
-            {
-                "budget_id": budget_id,
-                "pattern": pattern,
-                "match_type": MATCH_TYPE_CONTAINS,
-                "account_id": account_id,
-                "category_id": category_id,
-                "tag": tag,
-            }
-        )
-        created = (
-            client.table("rules")
-            .insert({**insert_payload, "user_id": user_id})
-            .execute()
-        )
-        data = created.data or []
-        if not data:
-            raise RuntimeError("Failed to create rule from feedback")
-        rule = data[0]
-
-    hits = int(rule.get("hits") or 0) + 1
-    accepts = int(rule.get("accepts") or 0) + (1 if accepted else 0)
-    confidence = _recalculate_confidence(hits, accepts)
-
-    updated = (
-        client.table("rules")
-        .update({"hits": hits, "accepts": accepts, "confidence": confidence})
-        .eq("id", rule["id"])
-        .execute()
-    )
-    data = updated.data or []
-    if data:
-        return data[0]
-    raise RuntimeError("Failed to update rule feedback")

@@ -25,19 +25,19 @@ import {
   type ReconcileSummary,
   type ReportsSummary,
   type Rule,
-  type Suggestion,
   type Transaction,
   authTelegram,
+  applyRules,
   createAccount,
   createCategory,
   createDebtOther,
   createGoal,
+  createRule,
   createTransaction,
   deleteRule,
   deleteGoal,
   deleteTransaction,
   ensureDefaultBudgets,
-  feedback,
   getDailyState,
   getApiBaseUrl,
   getExpensesByCategoryReport,
@@ -55,7 +55,6 @@ import {
   listRules,
   listTransactions,
   resetBudget,
-  suggest,
   updateGoal,
   updateDailyState,
 } from "../src/lib/api";
@@ -160,11 +159,10 @@ export default function HomePage() {
   const [monthReport, setMonthReport] = useState<MonthReport | null>(null);
   const [incomeAccountId, setIncomeAccountId] = useState("");
   const [incomeAmount, setIncomeAmount] = useState("");
-  const [incomeNote, setIncomeNote] = useState("");
-  const [incomeSuggestion, setIncomeSuggestion] = useState<Suggestion | null>(
-    null,
+  const [incomeTag, setIncomeTag] = useState<"one_time" | "subscription">(
+    "one_time",
   );
-  const [incomeSuggestionApplied, setIncomeSuggestionApplied] = useState(false);
+  const [incomeNote, setIncomeNote] = useState("");
   const [expenseAccountId, setExpenseAccountId] = useState("");
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseCategoryId, setExpenseCategoryId] = useState("");
@@ -172,11 +170,12 @@ export default function HomePage() {
     "one_time",
   );
   const [expenseNote, setExpenseNote] = useState("");
-  const [expenseSuggestion, setExpenseSuggestion] = useState<Suggestion | null>(
-    null,
+  const [rulePattern, setRulePattern] = useState("");
+  const [ruleAccountId, setRuleAccountId] = useState("");
+  const [ruleCategoryId, setRuleCategoryId] = useState("");
+  const [ruleTag, setRuleTag] = useState<"one_time" | "subscription">(
+    "one_time",
   );
-  const [expenseSuggestionApplied, setExpenseSuggestionApplied] =
-    useState(false);
   const [transferFromAccountId, setTransferFromAccountId] = useState("");
   const [transferToAccountId, setTransferToAccountId] = useState("");
   const [transferAmount, setTransferAmount] = useState("");
@@ -540,10 +539,12 @@ export default function HomePage() {
     setGoalTitle("");
     setGoalTargetAmount("");
     setGoalDeadline("");
-    setIncomeSuggestion(null);
-    setExpenseSuggestion(null);
-    setIncomeSuggestionApplied(false);
-    setExpenseSuggestionApplied(false);
+    setIncomeTag("one_time");
+    setExpenseTag("one_time");
+    setRulePattern("");
+    setRuleAccountId("");
+    setRuleCategoryId("");
+    setRuleTag("one_time");
   };
 
   const categoryMap = useMemo(() => {
@@ -583,39 +584,14 @@ export default function HomePage() {
   const getTagLabel = (tag: "one_time" | "subscription" | null | undefined) =>
     tag === "subscription" ? "Подписка" : tag === "one_time" ? "Разовый" : "";
 
-  const formatRuleTarget = (rule: Rule) => {
-    const parts: string[] = [];
-    if (rule.account_id) {
-      parts.push(accountMap.get(rule.account_id)?.name ?? "Счет");
-    }
-    if (rule.category_id) {
-      parts.push(
-        categories.find((category) => category.id === rule.category_id)?.name ??
-          "Категория",
-      );
-    }
-    if (rule.tag) {
-      parts.push(getTagLabel(rule.tag));
-    }
-    return parts.length ? parts.join(", ") : "—";
-  };
+  const getAccountLabel = (accountId: string | null | undefined) =>
+    accountId ? accountMap.get(accountId)?.name ?? "Счет" : "—";
 
-  const formatSuggestionTarget = (suggestion: Suggestion) => {
-    const parts: string[] = [];
-    if (suggestion.account_id) {
-      parts.push(accountMap.get(suggestion.account_id)?.name ?? "Счет");
-    }
-    if (suggestion.category_id) {
-      parts.push(
-        categories.find((category) => category.id === suggestion.category_id)
-          ?.name ?? "Категория",
-      );
-    }
-    if (suggestion.tag) {
-      parts.push(getTagLabel(suggestion.tag));
-    }
-    return parts.length ? parts.join(", ") : "—";
-  };
+  const getCategoryLabel = (categoryId: string | null | undefined) =>
+    categoryId
+      ? categories.find((category) => category.id === categoryId)?.name ??
+        "Категория"
+      : "—";
 
   const dailyTotal = useMemo(() => {
     return transactions.reduce((total, tx) => {
@@ -694,11 +670,6 @@ export default function HomePage() {
   const deltaToApply = -reconcileDiff;
   const isReconciledOrClose = isReconciled || Math.abs(deltaToApply) <= 1;
   const shouldShowQuickAdjust = Math.abs(deltaToApply) > 1;
-  const showIncomeSuggestion =
-    incomeSuggestion && incomeSuggestion.confidence >= 0.6;
-  const showExpenseSuggestion =
-    expenseSuggestion && expenseSuggestion.confidence >= 0.6;
-
   const renderMonthReconcileStatus = (diff: number) => {
     if (Math.abs(diff) <= 1) {
       return "OK";
@@ -738,10 +709,6 @@ export default function HomePage() {
     setMessage("");
     setActiveBudgetId(nextBudgetId);
     localStorage.setItem(ACTIVE_BUDGET_STORAGE_KEY, nextBudgetId);
-    setIncomeSuggestion(null);
-    setExpenseSuggestion(null);
-    setIncomeSuggestionApplied(false);
-    setExpenseSuggestionApplied(false);
     try {
       const [
         loadedAccounts,
@@ -814,34 +781,31 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!token || !activeBudgetId) {
-      setIncomeSuggestion(null);
-      setIncomeSuggestionApplied(false);
       return;
     }
     const trimmedNote = incomeNote.trim();
     if (!trimmedNote) {
-      setIncomeSuggestion(null);
-      setIncomeSuggestionApplied(false);
       return;
     }
     let isCancelled = false;
     const timeoutId = window.setTimeout(async () => {
       try {
-        const response = await suggest(token, {
+        const response = await applyRules(token, {
           budget_id: activeBudgetId,
-          note: trimmedNote,
+          text: trimmedNote,
         });
         if (!isCancelled) {
-          setIncomeSuggestion(response);
-          setIncomeSuggestionApplied(false);
+          if (response.account_id) {
+            setIncomeAccountId(response.account_id);
+          }
+          if (response.tag) {
+            setIncomeTag(response.tag);
+          }
         }
       } catch (error) {
-        if (!isCancelled) {
-          setIncomeSuggestion(null);
-          setIncomeSuggestionApplied(false);
-        }
+        return;
       }
-    }, 300);
+    }, 400);
     return () => {
       isCancelled = true;
       window.clearTimeout(timeoutId);
@@ -850,34 +814,34 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!token || !activeBudgetId) {
-      setExpenseSuggestion(null);
-      setExpenseSuggestionApplied(false);
       return;
     }
     const trimmedNote = expenseNote.trim();
     if (!trimmedNote) {
-      setExpenseSuggestion(null);
-      setExpenseSuggestionApplied(false);
       return;
     }
     let isCancelled = false;
     const timeoutId = window.setTimeout(async () => {
       try {
-        const response = await suggest(token, {
+        const response = await applyRules(token, {
           budget_id: activeBudgetId,
-          note: trimmedNote,
+          text: trimmedNote,
         });
         if (!isCancelled) {
-          setExpenseSuggestion(response);
-          setExpenseSuggestionApplied(false);
+          if (response.account_id) {
+            setExpenseAccountId(response.account_id);
+          }
+          if (response.category_id) {
+            setExpenseCategoryId(response.category_id);
+          }
+          if (response.tag) {
+            setExpenseTag(response.tag);
+          }
         }
       } catch (error) {
-        if (!isCancelled) {
-          setExpenseSuggestion(null);
-          setExpenseSuggestionApplied(false);
-        }
+        return;
       }
-    }, 300);
+    }, 400);
     return () => {
       isCancelled = true;
       window.clearTimeout(timeoutId);
@@ -945,82 +909,37 @@ export default function HomePage() {
     }
     setMessage("");
     try {
-      await deleteRule(token, ruleId);
+      await deleteRule(token, { id: ruleId, budget_id: activeBudgetId });
       await loadRulesData(token, activeBudgetId);
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось удалить правило", error));
     }
   };
 
-  const handleApplyIncomeSuggestion = () => {
-    if (!incomeSuggestion) {
+  const handleCreateRule = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token || !activeBudgetId) {
       return;
     }
-    if (incomeSuggestion.account_id) {
-      setIncomeAccountId(incomeSuggestion.account_id);
-    }
-    setIncomeSuggestionApplied(true);
-  };
-
-  const handleRejectIncomeSuggestion = async () => {
-    if (!token || !activeBudgetId || !incomeSuggestion) {
+    if (!rulePattern.trim()) {
+      setMessage("Укажите шаблон правила");
       return;
     }
     setMessage("");
     try {
-      await feedback(token, {
+      await createRule(token, {
         budget_id: activeBudgetId,
-        note: incomeNote,
-        accepted: false,
-        account_id: incomeSuggestion.account_id ?? null,
-        category_id: incomeSuggestion.category_id ?? null,
-        tag: incomeSuggestion.tag ?? null,
+        pattern: rulePattern,
+        account_id: ruleAccountId ? ruleAccountId : null,
+        category_id: ruleCategoryId ? ruleCategoryId : null,
+        tag: ruleTag,
       });
+      setRulePattern("");
+      setRuleAccountId("");
+      setRuleCategoryId("");
       await loadRulesData(token, activeBudgetId);
     } catch (error) {
-      setMessage(buildErrorMessage("Не удалось отправить отклик", error));
-    } finally {
-      setIncomeSuggestion(null);
-      setIncomeSuggestionApplied(false);
-    }
-  };
-
-  const handleApplyExpenseSuggestion = () => {
-    if (!expenseSuggestion) {
-      return;
-    }
-    if (expenseSuggestion.account_id) {
-      setExpenseAccountId(expenseSuggestion.account_id);
-    }
-    if (expenseSuggestion.category_id) {
-      setExpenseCategoryId(expenseSuggestion.category_id);
-    }
-    if (expenseSuggestion.tag) {
-      setExpenseTag(expenseSuggestion.tag);
-    }
-    setExpenseSuggestionApplied(true);
-  };
-
-  const handleRejectExpenseSuggestion = async () => {
-    if (!token || !activeBudgetId || !expenseSuggestion) {
-      return;
-    }
-    setMessage("");
-    try {
-      await feedback(token, {
-        budget_id: activeBudgetId,
-        note: expenseNote,
-        accepted: false,
-        account_id: expenseSuggestion.account_id ?? null,
-        category_id: expenseSuggestion.category_id ?? null,
-        tag: expenseSuggestion.tag ?? null,
-      });
-      await loadRulesData(token, activeBudgetId);
-    } catch (error) {
-      setMessage(buildErrorMessage("Не удалось отправить отклик", error));
-    } finally {
-      setExpenseSuggestion(null);
-      setExpenseSuggestionApplied(false);
+      setMessage(buildErrorMessage("Не удалось добавить правило", error));
     }
   };
 
@@ -1040,7 +959,6 @@ export default function HomePage() {
     }
     setMessage("");
     setIncomeErrorDetails(null);
-    const feedbackNote = incomeNote;
     try {
       await createTransaction(token, {
         budget_id: activeBudgetId,
@@ -1048,28 +966,11 @@ export default function HomePage() {
         amount,
         date: selectedDate,
         account_id: incomeAccountId,
-        tag: "one_time",
+        tag: incomeTag,
         note: incomeNote ? incomeNote : null,
       });
-      if (incomeSuggestionApplied && feedbackNote.trim()) {
-        try {
-          await feedback(token, {
-            budget_id: activeBudgetId,
-            note: feedbackNote,
-            accepted: true,
-            account_id: incomeAccountId,
-            category_id: null,
-            tag: null,
-          });
-          await loadRulesData(token, activeBudgetId);
-        } catch (error) {
-          setMessage(buildErrorMessage("Не удалось сохранить отклик", error));
-        }
-      }
       setIncomeAmount("");
       setIncomeNote("");
-      setIncomeSuggestion(null);
-      setIncomeSuggestionApplied(false);
       const updatedTransactions = await listTransactions(
         token,
         activeBudgetId,
@@ -1104,7 +1005,6 @@ export default function HomePage() {
     setMessage("");
     setExpenseErrorDetails(null);
     const categoryId = expenseCategoryId ? expenseCategoryId : null;
-    const feedbackNote = expenseNote;
     try {
       await createTransaction(token, {
         budget_id: activeBudgetId,
@@ -1116,25 +1016,8 @@ export default function HomePage() {
         tag: expenseTag,
         note: expenseNote ? expenseNote : null,
       });
-      if (expenseSuggestionApplied && feedbackNote.trim()) {
-        try {
-          await feedback(token, {
-            budget_id: activeBudgetId,
-            note: feedbackNote,
-            accepted: true,
-            account_id: expenseAccountId,
-            category_id: categoryId,
-            tag: expenseTag,
-          });
-          await loadRulesData(token, activeBudgetId);
-        } catch (error) {
-          setMessage(buildErrorMessage("Не удалось сохранить отклик", error));
-        }
-      }
       setExpenseAmount("");
       setExpenseNote("");
-      setExpenseSuggestion(null);
-      setExpenseSuggestionApplied(false);
       const updatedTransactions = await listTransactions(
         token,
         activeBudgetId,
@@ -1915,8 +1798,9 @@ export default function HomePage() {
                 <thead>
                   <tr>
                     <th>Шаблон</th>
-                    <th>Цель</th>
-                    <th>Confidence</th>
+                    <th>Счет</th>
+                    <th>Категория</th>
+                    <th>Тег</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -1924,8 +1808,9 @@ export default function HomePage() {
                   {rules.map((rule) => (
                     <tr key={rule.id}>
                       <td>{rule.pattern}</td>
-                      <td>{formatRuleTarget(rule)}</td>
-                      <td>{rule.confidence.toFixed(2)}</td>
+                      <td>{getAccountLabel(rule.account_id)}</td>
+                      <td>{getCategoryLabel(rule.category_id)}</td>
+                      <td>{getTagLabel(rule.tag)}</td>
                       <td>
                         <button
                           type="button"
@@ -1941,6 +1826,60 @@ export default function HomePage() {
             ) : (
               <p>Нет правил</p>
             )}
+            <form onSubmit={handleCreateRule}>
+              <label>
+                Шаблон:
+                <input
+                  type="text"
+                  value={rulePattern}
+                  onChange={(event) => setRulePattern(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Счет:
+                <select
+                  value={ruleAccountId}
+                  onChange={(event) => setRuleAccountId(event.target.value)}
+                >
+                  <option value="">Не выбран</option>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Категория:
+                <select
+                  value={ruleCategoryId}
+                  onChange={(event) => setRuleCategoryId(event.target.value)}
+                >
+                  <option value="">Не выбрана</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Тег:
+                <select
+                  value={ruleTag}
+                  onChange={(event) =>
+                    setRuleTag(
+                      event.target.value as "one_time" | "subscription",
+                    )
+                  }
+                >
+                  <option value="one_time">Разовый</option>
+                  <option value="subscription">Подписка</option>
+                </select>
+              </label>
+              <button type="submit">Добавить правило</button>
+            </form>
           </section>
 
           {viewMode === "day" && (
@@ -2375,6 +2314,21 @@ export default function HomePage() {
                 />
               </label>
               <label>
+                Тег:
+                <select
+                  value={incomeTag}
+                  onChange={(event) =>
+                    setIncomeTag(
+                      event.target.value as "one_time" | "subscription",
+                    )
+                  }
+                  disabled={!hasAccounts}
+                >
+                  <option value="one_time">Разовый</option>
+                  <option value="subscription">Подписка</option>
+                </select>
+              </label>
+              <label>
                 Заметка:
                 <input
                   type="text"
@@ -2383,29 +2337,6 @@ export default function HomePage() {
                   disabled={!hasAccounts}
                 />
               </label>
-              {showIncomeSuggestion && incomeSuggestion && (
-                <div>
-                  <p>
-                    Подсказка: {formatSuggestionTarget(incomeSuggestion)}
-                    {incomeSuggestion.pattern
-                      ? ` (pattern: ${incomeSuggestion.pattern})`
-                      : ""}
-                    {` | confidence: ${incomeSuggestion.confidence.toFixed(2)}`}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleApplyIncomeSuggestion}
-                  >
-                    Применить
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleRejectIncomeSuggestion}
-                  >
-                    Не подходит
-                  </button>
-                </div>
-              )}
               <button type="submit" disabled={!hasAccounts}>
                 Добавить
               </button>
@@ -2495,29 +2426,6 @@ export default function HomePage() {
                   disabled={!hasAccounts}
                 />
               </label>
-              {showExpenseSuggestion && expenseSuggestion && (
-                <div>
-                  <p>
-                    Подсказка: {formatSuggestionTarget(expenseSuggestion)}
-                    {expenseSuggestion.pattern
-                      ? ` (pattern: ${expenseSuggestion.pattern})`
-                      : ""}
-                    {` | confidence: ${expenseSuggestion.confidence.toFixed(2)}`}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleApplyExpenseSuggestion}
-                  >
-                    Применить
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleRejectExpenseSuggestion}
-                  >
-                    Не подходит
-                  </button>
-                </div>
-              )}
               <button type="submit" disabled={!hasAccounts}>
                 Добавить
               </button>
