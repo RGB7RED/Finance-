@@ -229,14 +229,17 @@ def upsert_manual_adjust_event(
     }
     client = get_supabase_client()
     try:
-        response = (
-            client.table("account_balance_events")
-            .upsert(
-                payload,
-                on_conflict="budget_id,user_id,date,account_id,reason",
+        if existing is not None:
+            response = (
+                client.table("account_balance_events")
+                .update({"delta": int(delta)})
+                .eq("id", existing.get("id"))
+                .execute()
             )
-            .execute()
-        )
+        else:
+            response = (
+                client.table("account_balance_events").insert(payload).execute()
+            )
     except APIError as exc:
         _raise_postgrest_http_error(exc)
     data = response.data or []
