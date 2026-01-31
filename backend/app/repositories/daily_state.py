@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from typing import Any
 
@@ -11,6 +12,8 @@ from app.repositories.account_balance_events import (
     get_balances_as_of,
     has_balance_events_as_of,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _ensure_budget_access(user_id: str, budget_id: str) -> None:
@@ -203,6 +206,18 @@ def upsert_debts(
         "debt_cards_total": debt_cards_total,
         "debt_other_total": debt_other_total,
     }
+    logger.info(
+        "daily_state_upsert table=%s on_conflict=%s payload_keys=%s",
+        "daily_state",
+        "budget_id,date",
+        {
+            "budget_id": budget_id,
+            "user_id": user_id,
+            "date": target_date.isoformat(),
+            "debt_cards_total": debt_cards_total,
+            "debt_other_total": debt_other_total,
+        },
+    )
     client = get_supabase_client()
     try:
         response = (
