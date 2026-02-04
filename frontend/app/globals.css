@@ -280,6 +280,102 @@ a:hover {
   flex-wrap: wrap;
 }
 
+.mf-date-row {
+  align-items: center;
+}
+
+.mf-date-row__value {
+  font-weight: 600;
+}
+
+.mf-date-row__edit {
+  border: none;
+  background: transparent;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+}
+
+.mf-transaction-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mf-transaction-group__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+.mf-transaction-group__total {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.mf-transaction-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mf-transaction-row__main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mf-transaction-row__label {
+  flex: 1;
+}
+
+.mf-amount {
+  font-weight: 700;
+}
+
+.mf-amount--pos {
+  color: var(--pos);
+}
+
+.mf-amount--neg {
+  color: var(--neg);
+}
+
+.mf-amount--neutral {
+  color: var(--text);
+}
+
+.mf-transaction-details {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface-2);
+}
+
+.mf-transaction-details__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mf-transaction-details__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .mf-muted {
   color: var(--text-muted);
 }

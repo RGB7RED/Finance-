@@ -134,6 +134,33 @@ const getDefaultReportRange = (): { from: string; to: string } => {
 const getDefaultMonth = (): string =>
   new Date().toISOString().slice(0, 7);
 
+const SHORT_RU_MONTHS = [
+  "янв",
+  "фев",
+  "мар",
+  "апр",
+  "май",
+  "июн",
+  "июл",
+  "авг",
+  "сен",
+  "окт",
+  "ноя",
+  "дек",
+];
+
+const formatShortRuDate = (value: string): string => {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) {
+    return value;
+  }
+  const monthLabel = SHORT_RU_MONTHS[month - 1];
+  if (!monthLabel) {
+    return value;
+  }
+  return `${day} ${monthLabel} ${year}`;
+};
+
 export default function HomePage() {
   const [status, setStatus] = useState<Status>("loading");
   const [viewMode, setViewMode] = useState<"day" | "month">("day");
@@ -164,6 +191,10 @@ export default function HomePage() {
   const [selectedDate, setSelectedDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
   );
+  const [opsDate, setOpsDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [isOpsDateEdited, setIsOpsDateEdited] = useState(false);
   const [reportFrom, setReportFrom] = useState(
     () => getDefaultReportRange().from,
   );
@@ -314,6 +345,12 @@ export default function HomePage() {
     const loadedRules = await listRules(authToken, budgetId);
     setRules(loadedRules);
   };
+
+  useEffect(() => {
+    if (!isOpsDateEdited) {
+      setOpsDate(selectedDate);
+    }
+  }, [isOpsDateEdited, selectedDate]);
 
   useEffect(() => {
     const loadDashboard = async () => {
@@ -678,6 +715,11 @@ export default function HomePage() {
   const bottomDayTotal = reconcileSummary?.bottom_total ?? dailyTotal;
   const reconcileDiff = reconcileSummary?.diff ?? 0;
   const reconcileDiffAbs = Math.abs(reconcileDiff);
+
+  const handleOpsDateChange = (value: string) => {
+    setOpsDate(value);
+    setIsOpsDateEdited(true);
+  };
   const reconcileDelta = bottomDayTotal - topDayTotal;
   const reconcileDeltaAbs = Math.abs(reconcileDelta);
   const reconcileEligibleAccountIds = useMemo(() => {
@@ -1079,12 +1121,13 @@ export default function HomePage() {
     }
     setMessage("");
     setIncomeErrorDetails(null);
+    const transactionDate = opsDate || selectedDate;
     try {
       await createTransaction(token, {
         budget_id: activeBudgetId,
         type: "income",
         amount,
-        date: selectedDate,
+        date: transactionDate,
         account_id: incomeAccountId,
         tag: incomeTag,
         note: incomeNote ? incomeNote : null,
@@ -1126,12 +1169,13 @@ export default function HomePage() {
     setMessage("");
     setExpenseErrorDetails(null);
     const categoryId = expenseCategoryId ? expenseCategoryId : null;
+    const transactionDate = opsDate || selectedDate;
     try {
       await createTransaction(token, {
         budget_id: activeBudgetId,
         type: "expense",
         amount,
-        date: selectedDate,
+        date: transactionDate,
         account_id: expenseAccountId,
         category_id: categoryId,
         tag: expenseTag,
@@ -1177,12 +1221,13 @@ export default function HomePage() {
     }
     setMessage("");
     setTransferErrorDetails(null);
+    const transactionDate = opsDate || selectedDate;
     try {
       await createTransaction(token, {
         budget_id: activeBudgetId,
         type: "transfer",
         amount,
-        date: selectedDate,
+        date: transactionDate,
         account_id: transferFromAccountId,
         to_account_id: transferToAccountId,
         tag: "one_time",
@@ -1280,6 +1325,7 @@ export default function HomePage() {
     }
     setMessage("");
     setDebtOtherErrorDetails(null);
+    const transactionDate = opsDate || selectedDate;
     try {
       await createDebtOther(token, {
         budget_id: activeBudgetId,
@@ -1287,7 +1333,7 @@ export default function HomePage() {
         direction: debtOtherDirection,
         debt_type: debtOtherType,
         account_id: debtOtherAccountId,
-        date: selectedDate,
+        date: transactionDate,
       });
       setDebtOtherAmount("");
       const [updatedAccounts] = await Promise.all([
@@ -1595,6 +1641,8 @@ export default function HomePage() {
                 onDebtOtherAccountChange={setDebtOtherAccountId}
                 onCreateDebtOther={handleCreateDebtOther}
                 debtOtherErrorDetails={debtOtherErrorDetails}
+                opsDate={opsDate}
+                onOpsDateChange={handleOpsDateChange}
                 transactions={transactions}
                 selectedDate={selectedDate}
                 onSelectedDateChange={setSelectedDate}
@@ -1741,64 +1789,255 @@ const TransactionsCard = ({
         onChange={(event) => onSelectedDateChange(event.target.value)}
       />
     </div>
-    {transactions.length ? (
-      <ul className="mf-list">
-        {transactions.map((tx) => {
-          const accountName =
-            (tx.account_id && accountMap.get(tx.account_id)?.name) || "Счет";
-          const toAccountName =
-            (tx.to_account_id && accountMap.get(tx.to_account_id)?.name) ||
-            "Счет";
-          const goalTitle =
-            (tx.goal_id &&
-              goals.find((goal) => goal.id === tx.goal_id)?.title) ||
-            null;
-          const categoryName =
-            (tx.category_id &&
-              categories.find((cat) => cat.id === tx.category_id)?.name) ||
-            null;
-          const isGoalTransfer = tx.kind === "goal_transfer";
-          return (
-            <li key={tx.id} className="mf-list-item">
-              <div>
-                <strong>{isGoalTransfer ? "goal_transfer" : tx.type}</strong>:
-                {` ${tx.amount} ₽ `}
-                {tx.type === "transfer" && (
-                  <span>
-                    {accountName} → {toAccountName}
-                  </span>
-                )}
-                {tx.type !== "transfer" && <span>{accountName}</span>}
-                {isGoalTransfer && (
-                  <span> (Цель: {goalTitle ?? "—"})</span>
-                )}
-                {tx.type === "expense" && !isGoalTransfer && (
-                  <span>
-                    {" "}
-                    {categoryName ? `(${categoryName})` : "(Без категории)"}
-                  </span>
-                )}
-                {tx.note && <span> — {tx.note}</span>}
-              </div>
-              <Button
-                variant="secondary"
-                className="mf-button--small"
-                onClick={() => onDeleteTransaction(tx.id)}
-              >
-                Удалить
-              </Button>
-            </li>
-          );
-        })}
-      </ul>
-    ) : (
-      <p className="mf-muted">Нет операций</p>
-    )}
+    <TransactionsGroupList
+      transactions={transactions}
+      accountMap={accountMap}
+      goals={goals}
+      categories={categories}
+      onDeleteTransaction={onDeleteTransaction}
+    />
     {showSummary && (
       <p className="mf-muted">Итог за день (нижний): {bottomDayTotal} ₽</p>
     )}
   </Card>
 );
+
+type OperationDateRowProps = {
+  dateValue: string;
+  onDateChange: (value: string) => void;
+};
+
+const OperationDateRow = ({
+  dateValue,
+  onDateChange,
+}: OperationDateRowProps) => {
+  const [isEditing, setIsEditing] = useState(false);
+  return (
+    <div className="mf-stack">
+      <div className="mf-row mf-date-row">
+        <span className="mf-small">Дата:</span>
+        <span className="mf-date-row__value">
+          {formatShortRuDate(dateValue)}
+        </span>
+        <button
+          type="button"
+          className="mf-date-row__edit"
+          onClick={() => setIsEditing((prev) => !prev)}
+          aria-label="Изменить дату"
+        >
+          ✎
+        </button>
+      </div>
+      {isEditing && (
+        <Input
+          label="Выберите дату"
+          type="date"
+          value={dateValue}
+          onChange={(event) => {
+            onDateChange(event.target.value);
+            setIsEditing(false);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+type TransactionsGroupListProps = {
+  transactions: Transaction[];
+  accountMap: Map<string, Account>;
+  goals: Goal[];
+  categories: Category[];
+  onDeleteTransaction: (txId: string) => void;
+};
+
+const TransactionsGroupList = ({
+  transactions,
+  accountMap,
+  goals,
+  categories,
+  onDeleteTransaction,
+}: TransactionsGroupListProps) => {
+  const [expandedTransactionId, setExpandedTransactionId] = useState<
+    string | null
+  >(null);
+  const groupedTransactions = useMemo(() => {
+    const map = new Map<
+      string,
+      { date: string; total: number; items: Transaction[] }
+    >();
+    const order: string[] = [];
+    transactions.forEach((tx) => {
+      if (!map.has(tx.date)) {
+        map.set(tx.date, { date: tx.date, total: 0, items: [] });
+        order.push(tx.date);
+      }
+      const group = map.get(tx.date);
+      if (!group) {
+        return;
+      }
+      group.items.push(tx);
+      if (tx.kind === "normal") {
+        if (tx.type === "income") {
+          group.total += tx.amount;
+        } else if (tx.type === "expense") {
+          group.total -= tx.amount;
+        }
+      }
+    });
+    return order.map((date) => map.get(date)).filter(Boolean) as Array<{
+      date: string;
+      total: number;
+      items: Transaction[];
+    }>;
+  }, [transactions]);
+
+  if (!transactions.length) {
+    return <p className="mf-muted">Нет операций</p>;
+  }
+
+  return (
+    <div className="mf-stack">
+      {groupedTransactions.map((group) => (
+        <div key={group.date} className="mf-transaction-group">
+          <div className="mf-transaction-group__header">
+            <span>{formatShortRuDate(group.date)}</span>
+            <span className="mf-transaction-group__total">
+              Итог дня: {formatRub(group.total)}
+            </span>
+          </div>
+          <div className="mf-divider" />
+          <div className="mf-stack">
+            {group.items.map((tx, index) => {
+              const isExpanded = expandedTransactionId === tx.id;
+              const accountName =
+                (tx.account_id && accountMap.get(tx.account_id)?.name) ||
+                "Счет";
+              const toAccountName =
+                (tx.to_account_id && accountMap.get(tx.to_account_id)?.name) ||
+                "Счет";
+              const categoryName =
+                (tx.category_id &&
+                  categories.find((cat) => cat.id === tx.category_id)?.name) ||
+                null;
+              const goalTitle =
+                (tx.goal_id &&
+                  goals.find((goal) => goal.id === tx.goal_id)?.title) ||
+                null;
+              const isGoalTransfer = tx.kind === "goal_transfer";
+              const amountSign =
+                tx.type === "income" ? 1 : tx.type === "expense" ? -1 : 0;
+              const amountValue =
+                amountSign === 0 ? tx.amount : tx.amount * amountSign;
+              const amountLabel = formatRub(amountValue);
+              const amountClass =
+                amountSign > 0
+                  ? "mf-amount--pos"
+                  : amountSign < 0
+                    ? "mf-amount--neg"
+                    : "mf-amount--neutral";
+              const tagLabel =
+                tx.tag === "subscription"
+                  ? "Подписка"
+                  : tx.tag === "one_time"
+                    ? "Разовый"
+                    : "";
+              const primaryLabel =
+                tx.type === "expense" && !isGoalTransfer
+                  ? categoryName ?? "Без категории"
+                  : tx.type === "transfer"
+                    ? "Перевод"
+                    : tagLabel || "Без тега";
+              const typeLabel = isGoalTransfer
+                ? "Перевод цели"
+                : tx.type === "income"
+                  ? "Доход"
+                  : tx.type === "expense"
+                    ? "Расход"
+                    : "Перевод";
+
+              return (
+                <div key={tx.id} className="mf-transaction-row">
+                  <button
+                    type="button"
+                    className="mf-transaction-row__main"
+                    onClick={() =>
+                      setExpandedTransactionId(isExpanded ? null : tx.id)
+                    }
+                    aria-expanded={isExpanded}
+                  >
+                    <span className={`mf-amount ${amountClass}`}>
+                      {amountLabel}
+                    </span>
+                    <span className="mf-transaction-row__label">
+                      {primaryLabel}
+                    </span>
+                  </button>
+                  {isExpanded && (
+                    <div className="mf-transaction-details">
+                      <div className="mf-transaction-details__row">
+                        <span className="mf-small">Сумма</span>
+                        <span>{amountLabel}</span>
+                      </div>
+                      <div className="mf-transaction-details__row">
+                        <span className="mf-small">Тип</span>
+                        <span>{typeLabel}</span>
+                      </div>
+                      <div className="mf-transaction-details__row">
+                        <span className="mf-small">Счёт</span>
+                        <span>
+                          {tx.type === "transfer"
+                            ? `${accountName} → ${toAccountName}`
+                            : accountName}
+                        </span>
+                      </div>
+                      <div className="mf-transaction-details__row">
+                        <span className="mf-small">
+                          {tx.type === "expense" ? "Категория" : "Тег"}
+                        </span>
+                        <span>
+                          {tx.type === "expense"
+                            ? categoryName ?? "Без категории"
+                            : tagLabel || "Без тега"}
+                        </span>
+                      </div>
+                      <div className="mf-transaction-details__row">
+                        <span className="mf-small">Дата</span>
+                        <span>{formatShortRuDate(tx.date)}</span>
+                      </div>
+                      <div className="mf-transaction-details__row">
+                        <span className="mf-small">Заметка</span>
+                        <span>{tx.note || "—"}</span>
+                      </div>
+                      {isGoalTransfer && (
+                        <div className="mf-transaction-details__row">
+                          <span className="mf-small">Цель</span>
+                          <span>{goalTitle ?? "—"}</span>
+                        </div>
+                      )}
+                      <div className="mf-transaction-details__actions">
+                        <Button
+                          variant="danger"
+                          className="mf-button--small"
+                          onClick={() => onDeleteTransaction(tx.id)}
+                        >
+                          Удалить
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  {index < group.items.length - 1 && (
+                    <div className="mf-divider mf-space" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
 
 type DayTabProps = {
   selectedDate: string;
@@ -2029,78 +2268,13 @@ const DayTab = ({
     </Card>
 
     <Card title="Операции за день">
-      {transactions.length ? (
-        <div className="mf-stack">
-          {transactions.map((tx, index) => {
-            const accountName =
-              (tx.account_id && accountMap.get(tx.account_id)?.name) || "Счет";
-            const toAccountName =
-              (tx.to_account_id && accountMap.get(tx.to_account_id)?.name) ||
-              "Счет";
-            const goalTitle =
-              (tx.goal_id &&
-                goals.find((goal) => goal.id === tx.goal_id)?.title) ||
-              null;
-            const categoryName =
-              (tx.category_id &&
-                categories.find((cat) => cat.id === tx.category_id)?.name) ||
-              null;
-            const isGoalTransfer = tx.kind === "goal_transfer";
-            const marker = isGoalTransfer ? "goal_transfer" : tx.type;
-            const metaParts: string[] = [];
-
-            if (tx.type === "transfer") {
-              metaParts.push(`${accountName} → ${toAccountName}`);
-            } else {
-              metaParts.push(accountName);
-            }
-
-            if (isGoalTransfer) {
-              metaParts.push(`Цель: ${goalTitle ?? "—"}`);
-            }
-
-            if (tx.type === "expense" && !isGoalTransfer) {
-              metaParts.push(categoryName ?? "Без категории");
-            }
-
-            return (
-              <div key={tx.id}>
-                <div
-                  className="mf-row"
-                  style={{
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
-                    width: "100%",
-                  }}
-                >
-                  <div style={{ flex: 1 }}>
-                    <div className="mf-row" style={{ gap: "8px" }}>
-                      <span className="mf-small">{marker}</span>
-                      <span>{tx.note || "Без описания"}</span>
-                    </div>
-                    <div className="mf-small">{metaParts.join(" · ")}</div>
-                  </div>
-                  <div className="mf-row" style={{ justifyContent: "end" }}>
-                    <strong>{formatRub(tx.amount)}</strong>
-                    <Button
-                      variant="danger"
-                      className="mf-button--small"
-                      onClick={() => onDeleteTransaction(tx.id)}
-                    >
-                      Delete
-                    </Button>
-                  </div>
-                </div>
-                {index < transactions.length - 1 && (
-                  <div className="mf-divider mf-space" />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <p className="mf-muted">Нет операций</p>
-      )}
+      <TransactionsGroupList
+        transactions={transactions}
+        accountMap={accountMap}
+        goals={goals}
+        categories={categories}
+        onDeleteTransaction={onDeleteTransaction}
+      />
     </Card>
   </div>
 );
@@ -2151,6 +2325,8 @@ type OpsTabProps = {
   onDebtOtherAccountChange: (value: string) => void;
   onCreateDebtOther: (event: FormEvent<HTMLFormElement>) => void;
   debtOtherErrorDetails: FormErrorDetails | null;
+  opsDate: string;
+  onOpsDateChange: (value: string) => void;
   transactions: Transaction[];
   selectedDate: string;
   onSelectedDateChange: (value: string) => void;
@@ -2206,6 +2382,8 @@ const OpsTab = ({
   onDebtOtherAccountChange,
   onCreateDebtOther,
   debtOtherErrorDetails,
+  opsDate,
+  onOpsDateChange,
   transactions,
   selectedDate,
   onSelectedDateChange,
@@ -2220,6 +2398,10 @@ const OpsTab = ({
         <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
       )}
       <form className="mf-stack" onSubmit={onCreateIncome}>
+        <OperationDateRow
+          dateValue={opsDate}
+          onDateChange={onOpsDateChange}
+        />
         <label className="mf-input">
           <span className="mf-input__label">Счет</span>
           <select
@@ -2287,6 +2469,10 @@ const OpsTab = ({
         <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
       )}
       <form className="mf-stack" onSubmit={onCreateExpense}>
+        <OperationDateRow
+          dateValue={opsDate}
+          onDateChange={onOpsDateChange}
+        />
         <label className="mf-input">
           <span className="mf-input__label">Счет</span>
           <select
@@ -2370,6 +2556,10 @@ const OpsTab = ({
         <p>Создайте хотя бы один счёт, чтобы делать переводы.</p>
       )}
       <form className="mf-stack" onSubmit={onCreateTransfer}>
+        <OperationDateRow
+          dateValue={opsDate}
+          onDateChange={onOpsDateChange}
+        />
         <label className="mf-input">
           <span className="mf-input__label">Счет списания</span>
           <select
@@ -2438,6 +2628,10 @@ const OpsTab = ({
         <p>Создайте хотя бы один счёт, чтобы добавлять долги.</p>
       )}
       <form className="mf-stack" onSubmit={onCreateDebtOther}>
+        <OperationDateRow
+          dateValue={opsDate}
+          onDateChange={onOpsDateChange}
+        />
         <Input
           label="Сумма"
           type="number"
