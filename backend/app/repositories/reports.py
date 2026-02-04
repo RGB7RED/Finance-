@@ -225,6 +225,38 @@ def balance_as_of_date(user_id: str, budget_id: str, target_date: date) -> int:
     return balance
 
 
+def balance_by_accounts(
+    user_id: str, budget_id: str, target_date: date
+) -> dict[str, Any]:
+    _ensure_budget_access(user_id, budget_id)
+    accounts = list_accounts(user_id, budget_id, target_date)
+    events = list_balance_events(user_id, budget_id, date_to=target_date)
+    balances: dict[str, int] = {account["id"]: 0 for account in accounts}
+    for event in events:
+        account_id = event.get("account_id")
+        if account_id in balances:
+            balances[account_id] += int(event.get("delta", 0))
+    total = 0
+    accounts_with_amounts: list[dict[str, Any]] = []
+    for account in accounts:
+        amount = balances.get(account["id"], 0)
+        total += amount
+        accounts_with_amounts.append(
+            {
+                "account_id": account["id"],
+                "name": account.get("name"),
+                "kind": account.get("kind"),
+                "currency": account.get("currency"),
+                "amount": amount,
+            }
+        )
+    return {
+        "date": target_date.isoformat(),
+        "accounts": accounts_with_amounts,
+        "total": total,
+    }
+
+
 def reconcile_by_date(
     user_id: str, budget_id: str, target_date: date
 ) -> dict[str, Any]:
