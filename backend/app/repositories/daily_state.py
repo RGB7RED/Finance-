@@ -178,16 +178,18 @@ def upsert_debts(
     debts_as_of = get_debts_as_of(user_id, budget_id, target_date)
     cash_total = int(existing_for_date.get("cash_total", 0))
     bank_total = int(existing_for_date.get("bank_total", 0))
-    debt_cards_total = int(
+    old_debt_cards_total = int(
         existing_for_date.get(
             "debt_cards_total", debts_as_of.get("debt_cards_total", 0)
         )
     )
-    debt_other_total = int(
+    old_debt_other_total = int(
         existing_for_date.get(
             "debt_other_total", debts_as_of.get("debt_other_total", 0)
         )
     )
+    debt_cards_total = old_debt_cards_total
+    debt_other_total = old_debt_other_total
     if credit_cards is not None:
         debt_cards_total = int(credit_cards)
     if people_debts is not None:
@@ -230,6 +232,12 @@ def upsert_debts(
     data = response.data or []
     if not data:
         raise RuntimeError("Failed to update daily debts")
+    delta_cards = debt_cards_total - old_debt_cards_total
+    delta_other = debt_other_total - old_debt_other_total
+    if delta_cards != 0 or delta_other != 0:
+        apply_forward_debt_delta(
+            user_id, budget_id, target_date, delta_cards, delta_other
+        )
     return data[0]
 
 
@@ -420,6 +428,57 @@ def apply_forward_delta(
             _raise_postgrest_http_error(exc)
 
 
+def apply_forward_debt_delta(
+    user_id: str,
+    budget_id: str,
+    target_date: date,
+    delta_cards: int,
+    delta_other: int,
+) -> None:
+    if delta_cards == 0 and delta_other == 0:
+        return
+    _ensure_budget_access(user_id, budget_id)
+    client = get_supabase_client()
+    response = (
+        client.table("daily_state")
+        .select("id, date, debt_cards_total, debt_other_total")
+        .eq("budget_id", budget_id)
+        .eq("user_id", user_id)
+        .gt("date", target_date.isoformat())
+        .order("date")
+        .execute()
+    )
+    records = response.data or []
+    if not records:
+        return
+    for record in records:
+        next_cards = int(record.get("debt_cards_total", 0)) + delta_cards
+        next_other = int(record.get("debt_other_total", 0)) + delta_other
+        if next_cards < 0 or next_other < 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Значение не может быть меньше 0",
+            )
+    for record in records:
+        update_fields: dict[str, int] = {}
+        if delta_cards != 0:
+            update_fields["debt_cards_total"] = (
+                int(record.get("debt_cards_total", 0)) + delta_cards
+            )
+        if delta_other != 0:
+            update_fields["debt_other_total"] = (
+                int(record.get("debt_other_total", 0)) + delta_other
+            )
+        if not update_fields:
+            continue
+        try:
+            client.table("daily_state").update(update_fields).eq(
+                "id", record.get("id")
+            ).execute()
+        except APIError as exc:
+            _raise_postgrest_http_error(exc)
+
+
 def update_with_propagation(
     user_id: str,
     budget_id: str,
@@ -469,9 +528,19 @@ def update_with_propagation(
     record = data[0]
     delta_cash = next_totals["cash_total"] - old_totals["cash_total"]
     delta_bank = next_totals["bank_total"] - old_totals["bank_total"]
+    delta_cards = (
+        next_totals["debt_cards_total"] - old_totals["debt_cards_total"]
+    )
+    delta_other = (
+        next_totals["debt_other_total"] - old_totals["debt_other_total"]
+    )
     if delta_cash != 0 or delta_bank != 0:
         apply_forward_delta(
             user_id, budget_id, target_date, delta_cash, delta_bank
+        )
+    if delta_cards != 0 or delta_other != 0:
+        apply_forward_debt_delta(
+            user_id, budget_id, target_date, delta_cards, delta_other
         )
     return {**record, **_calculate_totals(record)}
 
