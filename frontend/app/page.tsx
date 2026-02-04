@@ -1142,6 +1142,7 @@ export default function HomePage() {
       );
       setTransactions(updatedTransactions);
       await loadDailyStateData(token, activeBudgetId, selectedDate);
+      await loadReports();
     } catch (error) {
       const apiError = error as Error & { status?: number; text?: string };
       setIncomeErrorDetails({
@@ -1191,6 +1192,7 @@ export default function HomePage() {
       );
       setTransactions(updatedTransactions);
       await loadDailyStateData(token, activeBudgetId, selectedDate);
+      await loadReports();
     } catch (error) {
       const apiError = error as Error & { status?: number; text?: string };
       setExpenseErrorDetails({
@@ -1243,6 +1245,7 @@ export default function HomePage() {
       );
       setTransactions(updatedTransactions);
       await loadDailyStateData(token, activeBudgetId, selectedDate);
+      await loadReports();
     } catch (error) {
       const apiError = error as Error & { status?: number; text?: string };
       setTransferErrorDetails({

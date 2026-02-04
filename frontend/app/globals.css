@@ -1,15 +1,15 @@
 :root {
-  --bg: #0b1220;
-  --surface: #111827;
+  --bg: #0e1116;
+  --surface: #161b22;
   --surface-2: #0f172a;
   --border: #1f2937;
-  --text: #e5e7eb;
+  --text: #e6edf3;
   --text-muted: #9ca3af;
   --text-faint: #6b7280;
-  --primary: #5eead4;
+  --primary: #4c6fff;
   --primary-2: #2dd4bf;
-  --pos: #22c55e;
-  --neg: #ef4444;
+  --pos: #3fa37a;
+  --neg: #d16464;
   --warn: #f59e0b;
   --input-bg: #0b1220;
   --input-border: #1f2937;
@@ -207,6 +207,7 @@ a:hover {
   right: 0;
   bottom: 0;
   height: 56px;
+  padding-bottom: env(safe-area-inset-bottom);
   background: var(--surface-2);
   border-top: 1px solid var(--border);
   display: grid;
