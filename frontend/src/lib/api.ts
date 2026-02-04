@@ -199,6 +199,20 @@ export type DailyStateDebts = {
   people_debts: number;
 };
 
+export type BalanceByAccountsItem = {
+  account_id: string;
+  name: string;
+  kind: string;
+  currency: string | null;
+  amount: number;
+};
+
+export type BalanceByAccountsReport = {
+  date: string;
+  accounts: BalanceByAccountsItem[];
+  total: number;
+};
+
 export type DailyStateTotals = {
   cash_total: number;
   noncash_total: number;
@@ -828,6 +842,20 @@ export const getReportBalance = async (
 ): Promise<BalanceDay[]> => {
   const query = new URLSearchParams({ budget_id: budgetId, from, to });
   return requestJson(`/reports/balance?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const getReportBalanceByAccounts = async (
+  token: string,
+  budgetId: string,
+  targetDate: string,
+): Promise<BalanceByAccountsReport> => {
+  const query = new URLSearchParams({
+    budget_id: budgetId,
+    date: targetDate,
+  });
+  return requestJson(`/reports/balance-by-accounts?${query.toString()}`, {
     headers: authHeaders(token),
   });
 };

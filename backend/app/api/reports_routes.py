@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from app.auth.jwt import get_current_user
 from app.repositories.reports import (
     balance_by_day,
+    balance_by_accounts,
     cashflow_by_day,
     expenses_by_category,
     month_report,
@@ -28,6 +29,20 @@ class BalanceDay(BaseModel):
     debts_total: int
     balance: int
     delta_balance: int
+
+
+class BalanceByAccountsItem(BaseModel):
+    account_id: str
+    name: str
+    kind: str
+    currency: str | None = None
+    amount: int
+
+
+class BalanceByAccountsReport(BaseModel):
+    date: date
+    accounts: list[BalanceByAccountsItem]
+    total: int
 
 
 class ReportsGoal(BaseModel):
@@ -97,6 +112,15 @@ def get_reports_balance(
     current_user: dict = Depends(get_current_user),
 ) -> list[BalanceDay]:
     return balance_by_day(current_user["sub"], budget_id, from_date, to_date)
+
+
+@router.get("/reports/balance-by-accounts")
+def get_reports_balance_by_accounts(
+    budget_id: str,
+    target_date: date = Query(alias="date"),
+    current_user: dict = Depends(get_current_user),
+) -> BalanceByAccountsReport:
+    return balance_by_accounts(current_user["sub"], budget_id, target_date)
 
 
 @router.get("/reports/summary")

@@ -17,6 +17,7 @@ import { Tabs } from "../src/components/ui/Tabs";
 import {
   type Account,
   type AuthError,
+  type BalanceByAccountsReport,
   type Budget,
   type BalanceDay,
   type CashflowDay,
@@ -51,6 +52,7 @@ import {
   getMonthReport,
   getReconcile,
   getReportBalance,
+  getReportBalanceByAccounts,
   getReportCashflow,
   getReportSummary,
   isUnauthorized,
@@ -170,6 +172,10 @@ export default function HomePage() {
   );
   const [reportCashflow, setReportCashflow] = useState<CashflowDay[]>([]);
   const [reportBalance, setReportBalance] = useState<BalanceDay[]>([]);
+  const [reportBalanceByAccounts, setReportBalanceByAccounts] =
+    useState<BalanceByAccountsReport | null>(null);
+  const [isReportBalanceByAccountsOpen, setIsReportBalanceByAccountsOpen] =
+    useState(false);
   const [reportSummary, setReportSummary] = useState<ReportsSummary | null>(
     null,
   );
@@ -831,6 +837,10 @@ export default function HomePage() {
     void loadReports();
   }, [token, activeBudgetId, reportFrom, reportTo, reportExpensesLimit]);
 
+  useEffect(() => {
+    setIsReportBalanceByAccountsOpen(false);
+  }, [selectedDate]);
+
   const handleReportExpensesLimitChange = (
     event: ChangeEvent<HTMLSelectElement>,
   ) => {
@@ -843,6 +853,34 @@ export default function HomePage() {
       ...previous,
       [categoryId]: !previous[categoryId],
     }));
+  };
+
+  const handleToggleReportBalanceByAccounts = async () => {
+    if (isReportBalanceByAccountsOpen) {
+      setIsReportBalanceByAccountsOpen(false);
+      return;
+    }
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    if (reportBalanceByAccounts?.date === selectedDate) {
+      setIsReportBalanceByAccountsOpen(true);
+      return;
+    }
+    setMessage("");
+    try {
+      const report = await getReportBalanceByAccounts(
+        token,
+        activeBudgetId,
+        selectedDate,
+      );
+      setReportBalanceByAccounts(report);
+      setIsReportBalanceByAccountsOpen(true);
+    } catch (error) {
+      setMessage(
+        buildErrorMessage("Не удалось загрузить остатки по счетам", error),
+      );
+    }
   };
 
   useEffect(() => {
@@ -1574,6 +1612,12 @@ export default function HomePage() {
                 debtsTotal={debtsTotal}
                 balanceTotal={balanceTotal}
                 bottomDayTotal={bottomDayTotal}
+                selectedDate={selectedDate}
+                reportBalanceByAccounts={reportBalanceByAccounts}
+                isReportBalanceByAccountsOpen={isReportBalanceByAccountsOpen}
+                onToggleReportBalanceByAccounts={
+                  handleToggleReportBalanceByAccounts
+                }
                 reportFrom={reportFrom}
                 onReportFromChange={setReportFrom}
                 reportTo={reportTo}
@@ -2486,6 +2530,10 @@ type ReportsTabProps = {
   debtsTotal: number;
   balanceTotal: number;
   bottomDayTotal: number;
+  selectedDate: string;
+  reportBalanceByAccounts: BalanceByAccountsReport | null;
+  isReportBalanceByAccountsOpen: boolean;
+  onToggleReportBalanceByAccounts: () => void;
   reportFrom: string;
   onReportFromChange: (value: string) => void;
   reportTo: string;
@@ -2518,6 +2566,10 @@ const ReportsTab = ({
   debtsTotal,
   balanceTotal,
   bottomDayTotal,
+  selectedDate,
+  reportBalanceByAccounts,
+  isReportBalanceByAccountsOpen,
+  onToggleReportBalanceByAccounts,
   reportFrom,
   onReportFromChange,
   reportTo,
@@ -2539,8 +2591,27 @@ const ReportsTab = ({
   onSelectedMonthChange,
   monthReport,
   renderMonthReconcileStatus,
-}: ReportsTabProps) => (
-  <div className="mf-stack">
+}: ReportsTabProps) => {
+  const sortedBalanceAccounts = useMemo(() => {
+    if (!reportBalanceByAccounts?.accounts?.length) {
+      return [];
+    }
+    const kindOrder = new Map([
+      ["cash", 0],
+      ["bank", 1],
+    ]);
+    return [...reportBalanceByAccounts.accounts].sort((a, b) => {
+      const kindWeightA = kindOrder.get(a.kind) ?? 2;
+      const kindWeightB = kindOrder.get(b.kind) ?? 2;
+      if (kindWeightA !== kindWeightB) {
+        return kindWeightA - kindWeightB;
+      }
+      return a.name.localeCompare(b.name, "ru");
+    });
+  }, [reportBalanceByAccounts]);
+
+  return (
+    <div className="mf-stack">
     <Card title="Режим просмотра">
       <div className="mf-row">
         <Button
@@ -2562,7 +2633,50 @@ const ReportsTab = ({
       <>
         <Card title="Быстрые карточки">
           <div className="mf-stack">
-            <p>Остаток: {assetsTotal} ₽</p>
+            <div className="mf-row">
+              <p>Остаток: {assetsTotal} ₽</p>
+              <Button
+                variant="secondary"
+                className="mf-button--small"
+                onClick={onToggleReportBalanceByAccounts}
+              >
+                Показать по счетам {isReportBalanceByAccountsOpen ? "▲" : "▼"}
+              </Button>
+            </div>
+            {isReportBalanceByAccountsOpen &&
+            reportBalanceByAccounts &&
+            reportBalanceByAccounts.date === selectedDate ? (
+              reportBalanceByAccounts.accounts.length ? (
+                <table className="mf-table">
+                  <thead>
+                    <tr>
+                      <th>Счёт</th>
+                      <th>Остаток</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedBalanceAccounts.map((account) => (
+                      <tr key={account.account_id}>
+                        <td>{account.name}</td>
+                        <td>{formatRub(account.amount)}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td>
+                        <strong>Итого</strong>
+                      </td>
+                      <td>
+                        <strong>
+                          {formatRub(reportBalanceByAccounts.total)}
+                        </strong>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              ) : (
+                <p>Нет данных</p>
+              )
+            ) : null}
             <p>Долги: {debtsTotal} ₽</p>
             <p>Баланс: {balanceTotal} ₽</p>
             <p>Итог дня (нижний): {bottomDayTotal} ₽</p>
@@ -2787,7 +2901,8 @@ const ReportsTab = ({
       </>
     )}
   </div>
-);
+  );
+};
 
 type SettingsTabProps = {
   budgets: Budget[];
