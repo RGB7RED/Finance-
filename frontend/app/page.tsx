@@ -2,6 +2,7 @@
 
 import {
   Fragment,
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -291,7 +292,7 @@ export default function HomePage() {
     setReconcileSummary(reconcile);
   };
 
-  const loadReports = async () => {
+  const loadReports = useCallback(async () => {
     if (!token || !activeBudgetId) {
       return;
     }
@@ -323,7 +324,13 @@ export default function HomePage() {
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось загрузить отчеты", error));
     }
-  };
+  }, [
+    token,
+    activeBudgetId,
+    reportFrom,
+    reportTo,
+    reportExpensesLimit,
+  ]);
 
   const loadMonthReport = async () => {
     if (!token || !activeBudgetId || !selectedMonth) {
@@ -877,7 +884,7 @@ export default function HomePage() {
 
   useEffect(() => {
     void loadReports();
-  }, [token, activeBudgetId, reportFrom, reportTo, reportExpensesLimit]);
+  }, [loadReports]);
 
   useEffect(() => {
     setIsReportBalanceByAccountsOpen(false);

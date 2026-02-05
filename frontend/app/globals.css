@@ -205,7 +205,7 @@ a:hover {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: env(safe-area-inset-bottom);
   height: 56px;
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--surface-2);
