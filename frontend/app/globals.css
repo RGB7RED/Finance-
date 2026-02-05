@@ -205,11 +205,10 @@ a:hover {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: env(safe-area-inset-bottom);
+  bottom: max(env(safe-area-inset-bottom), 12px);
   height: 56px;
-  padding-bottom: env(safe-area-inset-bottom);
-  background: var(--surface-2);
-  border-top: 1px solid var(--border);
+  background: var(--surface);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   z-index: 10;
