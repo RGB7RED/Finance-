@@ -7,3 +7,4 @@ supabase
 httpx
 python-multipart
 python-telegram-bot
+pdfplumber

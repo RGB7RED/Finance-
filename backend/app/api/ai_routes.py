@@ -123,17 +123,37 @@ def _normalize_transactions(
 @router.post("/statement-drafts")
 async def post_statement_draft(
     budget_id: str = Form(...),
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(None),
+    statement_text: str | None = Form(None),
+    source: str | None = Form(None),
     statement_date: dt.date | None = Form(None),
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
-    _ensure_csv(file)
-    raw = await file.read()
-    statement_text = _decode_statement(raw)
+    if statement_text is not None:
+        statement_text = statement_text.strip()
+    if statement_text:
+        source_filename = None
+        source_mime = source or "text/plain"
+        source_value = source
+        statement_text_value = statement_text
+    else:
+        if not file:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Statement file or text is required",
+            )
+        _ensure_csv(file)
+        raw = await file.read()
+        source_filename = file.filename
+        source_mime = file.content_type
+        source_value = None
+        statement_text_value = _decode_statement(raw)
     as_of = statement_date or dt.date.today()
     context = _build_context(current_user["sub"], budget_id, as_of)
+    if source_value:
+        context["source"] = source_value
     try:
-        draft_payload = generate_statement_draft(statement_text, context)
+        draft_payload = generate_statement_draft(statement_text_value, context)
     except LLMError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
@@ -145,14 +165,16 @@ async def post_statement_draft(
         draft_payload, accounts, categories
     )
     draft_payload["normalized_transactions"] = normalized_transactions
+    if source_value:
+        draft_payload["source"] = source_value
     if warnings:
         draft_payload["warnings"] = warnings
     draft = create_statement_draft(
         current_user["sub"],
         budget_id,
-        file.filename,
-        file.content_type,
-        statement_text,
+        source_filename,
+        source_mime,
+        statement_text_value,
         settings.LLM_MODEL,
         draft_payload,
     )
