@@ -3,7 +3,7 @@ import json
 import logging
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field, StrictInt
 
 from app.auth.jwt import create_access_token, get_current_user
@@ -54,6 +54,13 @@ router = APIRouter()
 
 class TelegramAuthRequest(BaseModel):
     initData: str
+
+
+class TelegramBotAuthRequest(BaseModel):
+    telegram_id: int
+    username: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
 
 
 class AccountCreateRequest(BaseModel):
@@ -273,6 +280,35 @@ def auth_telegram(payload: TelegramAuthRequest) -> dict[str, str]:
     )
     access_token = create_access_token(user_id=user_id, telegram_id=telegram_user["id"])
 
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/auth/telegram-bot")
+def auth_telegram_bot(
+    payload: TelegramBotAuthRequest,
+    bot_token: str | None = Header(None, alias="X-Telegram-Bot-Token"),
+) -> dict[str, str]:
+    telegram_token = get_telegram_bot_token()
+    if not telegram_token:
+        logger.error("TELEGRAM_BOT_TOKEN is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Telegram authentication is not configured",
+        )
+    if not bot_token or bot_token != telegram_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid bot token",
+        )
+    user_id = upsert_user(
+        telegram_id=payload.telegram_id,
+        username=payload.username,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+    )
+    access_token = create_access_token(
+        user_id=user_id, telegram_id=payload.telegram_id
+    )
     return {"access_token": access_token, "token_type": "bearer"}
 
 

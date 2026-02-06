@@ -16,9 +16,11 @@ from app.core.config import (
     settings,
 )
 from app.integrations.supabase_client import get_supabase_client
+from app.integrations.telegram_bot import build_application, register_handlers
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
+
 
 def parse_cors_origins(value: str) -> list[str]:
     if value == "":
@@ -87,6 +89,32 @@ def log_cors_settings() -> None:
         telegram_token_length,
     )
     _log_supabase_startup_checks()
+
+
+@app.on_event("startup")
+async def start_telegram_bot() -> None:
+    token = get_telegram_bot_token()
+    if not token:
+        logger.info("telegram_bot_startup=skipped reason=token_missing")
+        return
+    telegram_app = build_application(token)
+    register_handlers(telegram_app)
+    await telegram_app.initialize()
+    await telegram_app.start()
+    await telegram_app.updater.start_polling()
+    app.state.telegram_app = telegram_app
+    logger.info("telegram_bot_startup=ok")
+
+
+@app.on_event("shutdown")
+async def stop_telegram_bot() -> None:
+    telegram_app = getattr(app.state, "telegram_app", None)
+    if not telegram_app:
+        return
+    await telegram_app.updater.stop()
+    await telegram_app.stop()
+    await telegram_app.shutdown()
+    logger.info("telegram_bot_shutdown=ok")
 
 
 @app.options("/{path:path}")

@@ -6,3 +6,4 @@ pyjwt
 supabase
 httpx
 python-multipart
+python-telegram-bot
