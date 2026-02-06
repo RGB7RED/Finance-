@@ -646,6 +646,7 @@ export const createDebtOther = async (
     direction: "borrowed" | "repaid";
     debt_type: "people" | "cards";
     account_id: string;
+    note?: string | null;
     date?: string;
   },
 ): Promise<DailyState> => {

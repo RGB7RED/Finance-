@@ -284,6 +284,7 @@ export default function HomePage() {
     "people",
   );
   const [debtOtherAccountId, setDebtOtherAccountId] = useState("");
+  const [debtOtherNote, setDebtOtherNote] = useState("");
   const [editingTransaction, setEditingTransaction] =
     useState<EditingTransaction | null>(null);
   const [goalAccountId, setGoalAccountId] = useState("");
@@ -601,6 +602,7 @@ export default function HomePage() {
     setDebtOtherDirection("borrowed");
     setDebtOtherType("people");
     setDebtOtherAccountId("");
+    setDebtOtherNote("");
     setGoalTitle("");
     setGoalTargetAmount("");
     setGoalDeadline("");
@@ -1165,6 +1167,7 @@ export default function HomePage() {
         );
         setDebtOtherType(debtMetadata?.debt_type ?? "people");
         setDebtOtherAccountId(tx.account_id ?? "");
+        setDebtOtherNote(debtMetadata?.note ?? "");
         return;
       }
       if (tx.type === "income") {
@@ -1192,6 +1195,7 @@ export default function HomePage() {
       setDebtOtherAccountId,
       setDebtOtherAmount,
       setDebtOtherDirection,
+      setDebtOtherNote,
       setDebtOtherType,
       setEditingTransaction,
       setExpenseAccountId,
@@ -1469,6 +1473,7 @@ export default function HomePage() {
     setMessage("");
     setDebtOtherErrorDetails(null);
     const transactionDate = opsDate || selectedDate;
+    const trimmedDebtNote = debtOtherNote.trim();
     try {
       if (
         editingTransaction &&
@@ -1486,9 +1491,11 @@ export default function HomePage() {
         direction: debtOtherDirection,
         debt_type: debtOtherType,
         account_id: debtOtherAccountId,
+        note: trimmedDebtNote ? trimmedDebtNote : null,
         date: transactionDate,
       });
       setDebtOtherAmount("");
+      setDebtOtherNote("");
       clearEditingTransaction();
       const [updatedAccounts] = await Promise.all([
         listAccounts(token, activeBudgetId),
@@ -1800,6 +1807,8 @@ export default function HomePage() {
                 onDebtOtherTypeChange={setDebtOtherType}
                 debtOtherAccountId={debtOtherAccountId}
                 onDebtOtherAccountChange={setDebtOtherAccountId}
+                debtOtherNote={debtOtherNote}
+                onDebtOtherNoteChange={setDebtOtherNote}
                 onCreateDebtOther={handleCreateDebtOther}
                 debtOtherErrorDetails={debtOtherErrorDetails}
                 opsDate={opsDate}
@@ -2201,7 +2210,7 @@ const TransactionsGroupList = ({
                         <span>{formatShortRuDate(tx.date)}</span>
                       </div>
                       <div className="mf-transaction-details__row">
-                        <span className="mf-small">Заметка</span>
+                        <span className="mf-small">Комментарий</span>
                         <span>{noteLabel || "—"}</span>
                       </div>
                       {isGoalTransfer && (
@@ -2528,6 +2537,8 @@ type OpsTabProps = {
   onDebtOtherTypeChange: (value: "people" | "cards") => void;
   debtOtherAccountId: string;
   onDebtOtherAccountChange: (value: string) => void;
+  debtOtherNote: string;
+  onDebtOtherNoteChange: (value: string) => void;
   onCreateDebtOther: (event: FormEvent<HTMLFormElement>) => void;
   debtOtherErrorDetails: FormErrorDetails | null;
   opsDate: string;
@@ -2588,6 +2599,8 @@ const OpsTab = ({
   onDebtOtherTypeChange,
   debtOtherAccountId,
   onDebtOtherAccountChange,
+  debtOtherNote,
+  onDebtOtherNoteChange,
   onCreateDebtOther,
   debtOtherErrorDetails,
   opsDate,
@@ -2665,7 +2678,7 @@ const OpsTab = ({
           </select>
         </label>
         <Input
-          label="Заметка"
+          label="Комментарий"
           type="text"
           value={incomeNote}
           onChange={(event) => onIncomeNoteChange(event.target.value)}
@@ -2752,7 +2765,7 @@ const OpsTab = ({
           </select>
         </label>
         <Input
-          label="Заметка"
+          label="Комментарий"
           type="text"
           value={expenseNote}
           onChange={(event) => onExpenseNoteChange(event.target.value)}
@@ -2908,6 +2921,13 @@ const OpsTab = ({
             ))}
           </select>
         </label>
+        <Input
+          label="Комментарий"
+          type="text"
+          value={debtOtherNote}
+          onChange={(event) => onDebtOtherNoteChange(event.target.value)}
+          disabled={!hasAccounts}
+        />
         <Button type="submit" disabled={!hasAccounts}>
           Добавить
         </Button>
