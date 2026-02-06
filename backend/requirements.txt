@@ -4,3 +4,5 @@ pydantic-settings
 python-dotenv
 pyjwt
 supabase
+httpx
+python-multipart
