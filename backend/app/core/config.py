@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     SUPABASE_URL: str | None = None
     SUPABASE_ANON_KEY: str | None = None
     SUPABASE_SERVICE_ROLE_KEY: str | None = None
+    LLM_API_KEY: str | None = None
+    LLM_API_BASE_URL: str = "https://api.openai.com/v1"
+    LLM_MODEL: str = "gpt-4o-mini"
     CORS_ORIGINS: str
     LOG_LEVEL: str
 
