@@ -53,7 +53,7 @@ create table if not exists public.transactions (
     tag text not null check (tag in ('one_time', 'subscription')),
     note text null,
     created_at timestamptz not null default now(),
-    check (kind in ('normal', 'transfer', 'goal_transfer')),
+    check (kind in ('normal', 'transfer', 'goal_transfer', 'debt')),
     check (
         (
             type in ('income', 'expense')
