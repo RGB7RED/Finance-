@@ -45,8 +45,11 @@ def generate_statement_draft(
         '      "kind": "normal|transfer|goal_transfer|debt",\n'
         '      "amount": 12345,\n'
         '      "account_name": "название счета",\n'
+        '      "account_kind": "cash|bank|card",\n'
         '      "to_account_name": "название счета назначения или null",\n'
+        '      "to_account_kind": "cash|bank|card|null",\n'
         '      "category_name": "категория или null",\n'
+        '      "category_type": "expense|null",\n'
         '      "tag": "one_time|subscription",\n'
         '      "note": "краткая заметка или null",\n'
         '      "debt": {"direction": "borrowed|repaid", "debt_type": "people|cards"}\n'
@@ -64,7 +67,8 @@ def generate_statement_draft(
         '    "date": "YYYY-MM-DD",\n'
         '    "credit_cards_total": 0,\n'
         '    "people_debts_total": 0\n'
-        "  }\n"
+        "  },\n"
+        '  "notes": ["предупреждения или пустой массив"]\n'
         "}\n"
         "Если данных недостаточно, оставляй массивы пустыми и поля debts null."
     )

@@ -8,11 +8,10 @@ from typing import Any
 
 import httpx
 import pdfplumber
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
-    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -25,22 +24,29 @@ logger = logging.getLogger(__name__)
 
 STATE_WAITING_STATEMENT_FILE = "WAITING_STATEMENT_FILE"
 STATE_WAITING_STATEMENT_FEEDBACK = "WAITING_STATEMENT_FEEDBACK"
-
-CALLBACK_CONFIRM = "statement_confirm"
-CALLBACK_REVISE = "statement_revise"
+STATE_WAITING_STATEMENT_CONFIRM = "WAITING_STATEMENT_CONFIRM"
 
 STATEMENT_COMMAND_TEXT = (
     "📄 Загрузка банковской выписки\n\n"
-    "1️⃣ Отправь CSV-файл выписки (из банка) или PDF с текстом.\n"
-    "2️⃣ Я проанализирую его с помощью ИИ.\n"
-    "3️⃣ Покажу черновик операций.\n"
-    "4️⃣ Ты сможешь подтвердить или внести правки.\n\n"
-    "⚠️ PDF должен содержать текст, а не скан."
+    "1️⃣ Пришлите файл выписки:\n"
+    "— PDF\n"
+    "— Excel (.xls / .xlsx)\n"
+    "— CSV\n\n"
+    "2️⃣ Выписка должна содержать:\n"
+    "— дату операции\n"
+    "— сумму\n"
+    "— описание (если есть)\n\n"
+    "3️⃣ После загрузки я:\n"
+    "— распознаю операции\n"
+    "— предложу категории и счета\n"
+    "— создам недостающие категории и счета (если подтвердите)\n"
+    "— покажу черновик перед применением\n\n"
+    "📎 Просто отправьте файл следующим сообщением"
 )
 
 INVALID_FILE_TEXT = (
     "❌ Неверный формат файла.\n\n"
-    "Пожалуйста, отправь выписку в формате CSV или PDF с текстом."
+    "Пожалуйста, отправь выписку в формате PDF, XLS/XLSX или CSV."
 )
 
 CONFIRM_SUCCESS_TEXT = (
@@ -54,10 +60,8 @@ PDF_RECEIVED_TEXT = (
 )
 
 PDF_UNSUPPORTED_TEXT = (
-    "❌ Не удалось прочитать PDF.\n\n"
-    "Этот файл, вероятно, является сканом.\n"
-    "Пожалуйста, скачай выписку в формате CSV\n"
-    "или PDF с текстом (не скан)."
+    "⚠️ Не удалось корректно извлечь данные из PDF.\n"
+    "Проверь, что файл — текстовый, а не скан."
 )
 
 PDF_MIN_TEXT_LENGTH = 300
@@ -204,6 +208,14 @@ def _is_pdf_document(document: Any) -> bool:
     return filename.endswith(".pdf")
 
 
+def _is_excel_document(document: Any) -> bool:
+    mime_type = (getattr(document, "mime_type", "") or "").lower()
+    filename = (getattr(document, "file_name", "") or "").lower()
+    if "spreadsheetml.sheet" in mime_type or "ms-excel" in mime_type:
+        return True
+    return filename.endswith((".xls", ".xlsx"))
+
+
 def _clean_pdf_text(raw_text: str) -> str:
     lines = []
     for line in raw_text.splitlines():
@@ -229,6 +241,15 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str | None:
             page_text = page.extract_text() or ""
             if page_text:
                 pages_text.append(page_text)
+            tables = page.extract_tables() or []
+            for table in tables:
+                rows = []
+                for row in table:
+                    rows.append(
+                        " | ".join((cell or "").strip() for cell in row)
+                    )
+                if rows:
+                    pages_text.append("\n".join(rows))
     cleaned = _clean_pdf_text("\n".join(pages_text))
     if not cleaned or not _is_supported_pdf_text(cleaned):
         return None
@@ -238,12 +259,13 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str | None:
 async def _request_statement_draft(
     jwt_token: str,
     budget_id: str,
-    csv_bytes: bytes,
+    file_bytes: bytes,
     filename: str,
+    mime_type: str,
 ) -> dict[str, Any]:
     url = f"{settings.BACKEND_API_BASE_URL.rstrip('/')}/ai/statement-drafts"
     data = {"budget_id": budget_id}
-    files = {"file": (filename, io.BytesIO(csv_bytes), "text/csv")}
+    files = {"file": (filename, io.BytesIO(file_bytes), mime_type)}
     headers = {"Authorization": f"Bearer {jwt_token}"}
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(url, data=data, files=files, headers=headers)
@@ -321,33 +343,22 @@ def _format_currency(amount: Any) -> str:
     return f"{value:.2f}"
 
 
-def _format_transactions(transactions: list[dict[str, Any]]) -> str:
-    if not transactions:
-        return "(операций нет)"
-    lines = []
-    for item in transactions[:3]:
-        amount = _format_currency(item.get("amount"))
-        account = item.get("account_name") or "Без счета"
-        note = item.get("note") or item.get("category_name") or "Без описания"
-        lines.append(f"{amount} — {note} ({account})")
-    return "\n".join(lines)
+def _format_signed_amount(value: float) -> str:
+    sign = "+" if value > 0 else "-" if value < 0 else ""
+    return f"{sign}{_format_currency(abs(value))}"
 
 
-def _format_balance_adjustments(adjustments: list[dict[str, Any]]) -> str:
-    if not adjustments:
-        return "(нет)"
-    lines = []
-    for item in adjustments:
-        account = item.get("account_name") or "Без счета"
-        delta = _format_currency(item.get("delta"))
-        lines.append(f"{account}: {delta}")
-    return "\n".join(lines)
+def _extract_amount(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _format_warnings(warnings: list[str]) -> str:
     if not warnings:
         return ""
-    return "\n".join(f"- {warning}" for warning in warnings)
+    return "\n".join(f"— {warning}" for warning in warnings)
 
 
 def _format_http_error(exc: httpx.HTTPError) -> str:
@@ -366,39 +377,90 @@ def _format_http_error(exc: httpx.HTTPError) -> str:
 
 def _build_draft_message(payload: dict[str, Any]) -> str:
     transactions = payload.get("transactions") or []
-    balance_adjustments = payload.get("balance_adjustments") or []
-    debts = payload.get("debts") or {}
+    normalized = payload.get("normalized_transactions") or []
     warnings = payload.get("warnings") or []
-    lines = [
-        "🤖 Я подготовил черновик выписки:\n",
-        f"Найдено операций: {len(transactions)}\n",
-        "Примеры:",
-        _format_transactions(transactions),
-        "\nИзменения баланса:",
-        _format_balance_adjustments(balance_adjustments),
+    missing_accounts = payload.get("missing_accounts") or []
+    missing_categories = payload.get("missing_categories") or []
+    expenses = [tx for tx in transactions if tx.get("type") == "expense"]
+    incomes = [tx for tx in transactions if tx.get("type") == "income"]
+    expense_total = sum(_extract_amount(tx.get("amount")) for tx in expenses)
+    income_total = sum(_extract_amount(tx.get("amount")) for tx in incomes)
+    net_total = income_total - expense_total
+    account_totals: dict[str, float] = {}
+    for tx in transactions:
+        amount = _extract_amount(tx.get("amount"))
+        account_name = tx.get("account_name") or "Без счета"
+        if tx.get("type") == "expense":
+            account_totals[account_name] = account_totals.get(
+                account_name, 0.0
+            ) - amount
+        elif tx.get("type") == "income":
+            account_totals[account_name] = account_totals.get(
+                account_name, 0.0
+            ) + amount
+        elif tx.get("type") == "transfer":
+            account_totals[account_name] = account_totals.get(
+                account_name, 0.0
+            ) - amount
+            to_name = tx.get("to_account_name") or "Без счета"
+            account_totals[to_name] = account_totals.get(to_name, 0.0) + amount
+    account_lines = [
+        f"— {name}: {_format_signed_amount(total)}"
+        for name, total in account_totals.items()
     ]
-    if debts:
-        lines.append("\nДолги/корректировки:")
-        lines.append(
-            f"Карты: {_format_currency(debts.get('credit_cards_total'))}, "
-            f"Люди: {_format_currency(debts.get('people_debts_total'))}"
+    if not account_lines:
+        account_lines = ["— (нет)"]
+    missing_desc = sum(
+        1
+        for tx in normalized
+        if not (tx.get("note") or "").strip()
+        and not (tx.get("category_name") or "").strip()
+    )
+    missing_category = sum(
+        1
+        for tx in normalized
+        if tx.get("type") == "expense"
+        and not (tx.get("category_name") or "").strip()
+    )
+    lines = [
+        "🤖 Я подготовил черновик выписки\n",
+        "📊 Операции:",
+        f"— Найдено: {len(transactions)}",
+        f"— Расходы: {len(expenses)}",
+        f"— Доходы: {len(incomes)}\n",
+        "💰 Итоги:",
+        f"— Расходы: {_format_signed_amount(-expense_total)}",
+        f"— Доходы: {_format_signed_amount(income_total)}",
+        f"— Чистый итог: {_format_signed_amount(net_total)}\n",
+        "🏦 Счета:",
+        *account_lines,
+    ]
+    if missing_accounts:
+        lines.append("\n➕ Будут созданы новые счета:")
+        for item in missing_accounts:
+            name = item.get("name") or "Без названия"
+            kind = item.get("kind") or "bank"
+            lines.append(f"— {name} (тип: {kind})")
+    if missing_categories:
+        lines.append("\n➕ Будут созданы новые категории:")
+        for item in missing_categories:
+            name = item.get("name") or "Без названия"
+            lines.append(f"— {name}")
+    attention: list[str] = []
+    if missing_desc:
+        attention.append(f"{missing_desc} операции без описания")
+    if missing_category:
+        attention.append(
+            f"{missing_category} операции без точной категории "
+            "(будет отнесена в «Прочее»)"
         )
     if warnings:
+        attention.extend(warnings)
+    if attention:
         lines.append("\n⚠️ Обрати внимание:")
-        lines.append(_format_warnings(warnings))
-    lines.append("\nПодтвердить применение?")
+        lines.append(_format_warnings(attention))
+    lines.append("\n❓ Применить изменения? Напишите: Да / Отмена")
     return "\n".join(lines)
-
-
-def _draft_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("✅ Да", callback_data=CALLBACK_CONFIRM),
-                InlineKeyboardButton("✏️ Изменить", callback_data=CALLBACK_REVISE),
-            ]
-        ]
-    )
 
 
 async def command_statement(
@@ -415,7 +477,9 @@ async def handle_document(
         return
     document = update.message.document if update.message else None
     if not document or not (
-        _is_csv_document(document) or _is_pdf_document(document)
+        _is_csv_document(document)
+        or _is_pdf_document(document)
+        or _is_excel_document(document)
     ):
         await update.effective_message.reply_text(INVALID_FILE_TEXT)
         return
@@ -452,11 +516,13 @@ async def handle_document(
             return
     else:
         await update.effective_message.chat.send_action(ChatAction.UPLOAD_DOCUMENT)
-        csv_bytes = await file.download_as_bytearray()
+        file_bytes = await file.download_as_bytearray()
         await update.effective_message.chat.send_action(ChatAction.TYPING)
+        filename = document.file_name or "statement"
+        mime_type = document.mime_type or "text/csv"
         try:
             response = await _request_statement_draft(
-                jwt_token, budget_id, bytes(csv_bytes), document.file_name
+                jwt_token, budget_id, bytes(file_bytes), filename, mime_type
             )
         except httpx.HTTPError as exc:
             logger.exception("Statement draft failed")
@@ -473,59 +539,49 @@ async def handle_document(
         )
         return
     _set_draft_context(context, draft_id, budget_id)
-    _set_state(context, None)
-    await update.effective_message.reply_text(
-        _build_draft_message(payload), reply_markup=_draft_keyboard()
-    )
+    _set_state(context, STATE_WAITING_STATEMENT_CONFIRM)
+    await update.effective_message.reply_text(_build_draft_message(payload))
 
 
-async def handle_callback(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
+async def _apply_statement_draft(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, jwt_token: str
 ) -> None:
-    query = update.callback_query
-    if not query:
-        return
-    await query.answer()
     draft_context = _get_draft_context(context)
     if not draft_context:
-        await query.edit_message_text("Черновик не найден. Начните заново.")
-        return
-    jwt_token = _get_jwt(context)
-    if not jwt_token:
-        await query.edit_message_text("Сессия истекла. Начните заново.")
-        return
-    if query.data == CALLBACK_CONFIRM:
-        try:
-            response = await _request_statement_apply(
-                jwt_token, draft_context.draft_id
-            )
-        except httpx.HTTPError as exc:
-            logger.exception("Statement apply failed")
-            await query.edit_message_text(
-                f"Ошибка применения выписки: {_format_http_error(exc)}"
-            )
-            return
-        _clear_draft_context(context)
-        errors = response.get("errors") if isinstance(response, dict) else []
-        if errors:
-            error_text = "\n".join(f"- {item}" for item in errors)
-            await query.edit_message_text(
-                f"{CONFIRM_SUCCESS_TEXT}\n\n⚠️ Ошибки применения:\n{error_text}"
-            )
-        else:
-            await query.edit_message_text(CONFIRM_SUCCESS_TEXT)
-        return
-    if query.data == CALLBACK_REVISE:
-        _set_state(context, STATE_WAITING_STATEMENT_FEEDBACK)
-        await query.edit_message_text(
-            "✏️ Напиши, что нужно изменить (категории, счета, суммы и т.д.)"
+        await update.effective_message.reply_text(
+            "Черновик не найден. Начните заново."
         )
+        _set_state(context, None)
+        return
+    try:
+        response = await _request_statement_apply(
+            jwt_token, draft_context.draft_id
+        )
+    except httpx.HTTPError as exc:
+        logger.exception("Statement apply failed")
+        await update.effective_message.reply_text(
+            f"Ошибка применения выписки: {_format_http_error(exc)}"
+        )
+        return
+    _clear_draft_context(context)
+    errors = response.get("errors") if isinstance(response, dict) else []
+    if errors:
+        error_text = "\n".join(f"- {item}" for item in errors)
+        await update.effective_message.reply_text(
+            f"{CONFIRM_SUCCESS_TEXT}\n\n⚠️ Ошибки применения:\n{error_text}"
+        )
+    else:
+        await update.effective_message.reply_text(CONFIRM_SUCCESS_TEXT)
 
 
 async def handle_feedback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    if _get_state(context) != STATE_WAITING_STATEMENT_FEEDBACK:
+    state = _get_state(context)
+    if state not in (
+        STATE_WAITING_STATEMENT_FEEDBACK,
+        STATE_WAITING_STATEMENT_CONFIRM,
+    ):
         return
     draft_context = _get_draft_context(context)
     if not draft_context:
@@ -547,6 +603,27 @@ async def handle_feedback(
             "Пожалуйста, пришлите текст с уточнениями."
         )
         return
+    if state == STATE_WAITING_STATEMENT_CONFIRM:
+        normalized = feedback.strip().lower()
+        if normalized in {"да", "yes"}:
+            jwt_token = _get_jwt(context)
+            if not jwt_token:
+                await update.effective_message.reply_text(
+                    "Сессия истекла. Начните заново."
+                )
+                _set_state(context, None)
+                return
+            _set_state(context, None)
+            await _apply_statement_draft(update, context, jwt_token)
+            return
+        if normalized in {"отмена", "cancel"}:
+            _clear_draft_context(context)
+            _set_state(context, None)
+            await update.effective_message.reply_text(
+                "Ок, отменил применение выписки."
+            )
+            return
+        _set_state(context, STATE_WAITING_STATEMENT_FEEDBACK)
     await update.effective_message.chat.send_action(ChatAction.TYPING)
     try:
         response = await _request_statement_revise(
@@ -567,14 +644,11 @@ async def handle_feedback(
         )
         return
     _set_draft_context(context, draft_id, draft_context.budget_id)
-    _set_state(context, None)
-    await update.effective_message.reply_text(
-        _build_draft_message(payload), reply_markup=_draft_keyboard()
-    )
+    _set_state(context, STATE_WAITING_STATEMENT_CONFIRM)
+    await update.effective_message.reply_text(_build_draft_message(payload))
 
 
 def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("statement", command_statement))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_feedback))
