@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+import pdfplumber
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.ext import (
@@ -29,22 +31,37 @@ CALLBACK_REVISE = "statement_revise"
 
 STATEMENT_COMMAND_TEXT = (
     "📄 Загрузка банковской выписки\n\n"
-    "1️⃣ Отправь CSV-файл выписки (из банка).\n"
+    "1️⃣ Отправь CSV-файл выписки (из банка) или PDF с текстом.\n"
     "2️⃣ Я проанализирую его с помощью ИИ.\n"
     "3️⃣ Покажу черновик операций.\n"
     "4️⃣ Ты сможешь подтвердить или внести правки.\n\n"
-    "⚠️ Поддерживается только CSV. Если у тебя XLSX — сначала сохрани как CSV."
+    "⚠️ PDF должен содержать текст, а не скан."
 )
 
 INVALID_FILE_TEXT = (
     "❌ Неверный формат файла.\n\n"
-    "Пожалуйста, отправь выписку в формате CSV."
+    "Пожалуйста, отправь выписку в формате CSV или PDF с текстом."
 )
 
 CONFIRM_SUCCESS_TEXT = (
     "✅ Выписка успешно применена.\n"
     "Операции добавлены в учёт."
 )
+
+PDF_RECEIVED_TEXT = (
+    "📄 Получен PDF-файл.\n"
+    "Пробую извлечь текст выписки…"
+)
+
+PDF_UNSUPPORTED_TEXT = (
+    "❌ Не удалось прочитать PDF.\n\n"
+    "Этот файл, вероятно, является сканом.\n"
+    "Пожалуйста, скачай выписку в формате CSV\n"
+    "или PDF с текстом (не скан)."
+)
+
+PDF_MIN_TEXT_LENGTH = 300
+PDF_MIN_ALNUM_RATIO = 0.3
 
 
 @dataclass
@@ -179,6 +196,45 @@ def _is_csv_document(document: Any) -> bool:
     return filename.endswith(".csv")
 
 
+def _is_pdf_document(document: Any) -> bool:
+    mime_type = (getattr(document, "mime_type", "") or "").lower()
+    filename = (getattr(document, "file_name", "") or "").lower()
+    if mime_type == "application/pdf":
+        return True
+    return filename.endswith(".pdf")
+
+
+def _clean_pdf_text(raw_text: str) -> str:
+    lines = []
+    for line in raw_text.splitlines():
+        cleaned = re.sub(r"[ \t]+", " ", line).strip()
+        if cleaned:
+            lines.append(cleaned)
+    return "\n".join(lines)
+
+
+def _is_supported_pdf_text(text: str) -> bool:
+    if len(text) < PDF_MIN_TEXT_LENGTH:
+        return False
+    alnum_count = sum(char.isalnum() for char in text)
+    if not text:
+        return False
+    return (alnum_count / len(text)) >= PDF_MIN_ALNUM_RATIO
+
+
+def _extract_pdf_text(pdf_bytes: bytes) -> str | None:
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        pages_text = []
+        for page in pdf.pages:
+            page_text = page.extract_text() or ""
+            if page_text:
+                pages_text.append(page_text)
+    cleaned = _clean_pdf_text("\n".join(pages_text))
+    if not cleaned or not _is_supported_pdf_text(cleaned):
+        return None
+    return cleaned
+
+
 async def _request_statement_draft(
     jwt_token: str,
     budget_id: str,
@@ -191,6 +247,25 @@ async def _request_statement_draft(
     headers = {"Authorization": f"Bearer {jwt_token}"}
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(url, data=data, files=files, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+
+async def _request_statement_draft_text(
+    jwt_token: str,
+    budget_id: str,
+    statement_text: str,
+    source: str,
+) -> dict[str, Any]:
+    url = f"{settings.BACKEND_API_BASE_URL.rstrip('/')}/ai/statement-drafts"
+    data = {
+        "budget_id": budget_id,
+        "statement_text": statement_text,
+        "source": source,
+    }
+    headers = {"Authorization": f"Bearer {jwt_token}"}
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(url, data=data, headers=headers)
         response.raise_for_status()
         return response.json()
 
@@ -339,7 +414,9 @@ async def handle_document(
     if _get_state(context) != STATE_WAITING_STATEMENT_FILE:
         return
     document = update.message.document if update.message else None
-    if not document or not _is_csv_document(document):
+    if not document or not (
+        _is_csv_document(document) or _is_pdf_document(document)
+    ):
         await update.effective_message.reply_text(INVALID_FILE_TEXT)
         return
     jwt_token = await _ensure_auth(update, context)
@@ -348,20 +425,45 @@ async def handle_document(
     budget_id = await _ensure_budget(update, context, jwt_token)
     if not budget_id:
         return
-    await update.effective_message.chat.send_action(ChatAction.UPLOAD_DOCUMENT)
     file = await document.get_file()
-    csv_bytes = await file.download_as_bytearray()
-    await update.effective_message.chat.send_action(ChatAction.TYPING)
-    try:
-        response = await _request_statement_draft(
-            jwt_token, budget_id, bytes(csv_bytes), document.file_name
-        )
-    except httpx.HTTPError as exc:
-        logger.exception("Statement draft failed")
-        await update.effective_message.reply_text(
-            f"Ошибка загрузки выписки: {_format_http_error(exc)}"
-        )
-        return
+    if _is_pdf_document(document):
+        await update.effective_message.reply_text(PDF_RECEIVED_TEXT)
+        await update.effective_message.chat.send_action(ChatAction.UPLOAD_DOCUMENT)
+        pdf_bytes = await file.download_as_bytearray()
+        await update.effective_message.chat.send_action(ChatAction.TYPING)
+        try:
+            statement_text = _extract_pdf_text(bytes(pdf_bytes))
+        except Exception:
+            logger.exception("PDF text extraction failed")
+            await update.effective_message.reply_text(PDF_UNSUPPORTED_TEXT)
+            return
+        if not statement_text:
+            await update.effective_message.reply_text(PDF_UNSUPPORTED_TEXT)
+            return
+        try:
+            response = await _request_statement_draft_text(
+                jwt_token, budget_id, statement_text, "pdf_text"
+            )
+        except httpx.HTTPError as exc:
+            logger.exception("Statement draft failed")
+            await update.effective_message.reply_text(
+                f"Ошибка загрузки выписки: {_format_http_error(exc)}"
+            )
+            return
+    else:
+        await update.effective_message.chat.send_action(ChatAction.UPLOAD_DOCUMENT)
+        csv_bytes = await file.download_as_bytearray()
+        await update.effective_message.chat.send_action(ChatAction.TYPING)
+        try:
+            response = await _request_statement_draft(
+                jwt_token, budget_id, bytes(csv_bytes), document.file_name
+            )
+        except httpx.HTTPError as exc:
+            logger.exception("Statement draft failed")
+            await update.effective_message.reply_text(
+                f"Ошибка загрузки выписки: {_format_http_error(exc)}"
+            )
+            return
     payload = response.get("payload") or {}
     draft = response.get("draft") or {}
     draft_id = draft.get("id")
