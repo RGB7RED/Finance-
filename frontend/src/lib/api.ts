@@ -158,7 +158,7 @@ export type Transaction = {
   user_id: string;
   date: string;
   type: "income" | "expense" | "transfer";
-  kind: "normal" | "transfer" | "goal_transfer";
+  kind: "normal" | "transfer" | "goal_transfer" | "debt";
   amount: number;
   account_id: string | null;
   to_account_id: string | null;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import Any
 
@@ -14,6 +15,7 @@ from app.repositories.account_balance_events import (
     TRANSACTION_REASON,
     create_balance_event,
 )
+from app.repositories.daily_state import get_debts_as_of, upsert_debts
 
 
 def _ensure_budget_access(user_id: str, budget_id: str) -> None:
@@ -98,6 +100,24 @@ def _parse_payload_date(value: Any) -> date:
     )
 
 
+def _parse_debt_metadata(note: str | None) -> dict[str, Any] | None:
+    if not note:
+        return None
+    try:
+        data = json.loads(note)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    debt_type = data.get("debt_type")
+    direction = data.get("direction")
+    if debt_type not in ("people", "cards"):
+        return None
+    if direction not in ("borrowed", "repaid"):
+        return None
+    return {"debt_type": debt_type, "direction": direction}
+
+
 def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     budget_id = payload.get("budget_id")
     if not budget_id:
@@ -119,7 +139,7 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         kind = "transfer" if tx_type == "transfer" else "normal"
         payload["kind"] = kind
 
-    if kind not in ("normal", "transfer", "goal_transfer"):
+    if kind not in ("normal", "transfer", "goal_transfer", "debt"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid transaction kind",
@@ -190,6 +210,11 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Goal transfers cannot have a category",
             )
+    if kind == "debt" and goal_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Debt operations cannot have a goal",
+        )
 
     serialized_payload = _serialize_payload(payload)
     rollback_event_ids: list[str] | None = None
@@ -313,17 +338,44 @@ def delete_transaction(user_id: str, tx_id: str) -> None:
     client = get_supabase_client()
     existing = (
         client.table("transactions")
-        .select("id, user_id")
+        .select("id, user_id, budget_id, date, type, kind, amount, note")
         .eq("id", tx_id)
         .execute()
     )
     data = existing.data or []
     if not data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    if data[0]["user_id"] != user_id:
+    record = data[0]
+    if record["user_id"] != user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Transaction does not belong to user",
         )
+    if record.get("kind") == "debt":
+        metadata = _parse_debt_metadata(record.get("note"))
+        if metadata:
+            target_date = _parse_payload_date(record.get("date"))
+            amount = int(record.get("amount", 0))
+            debt_delta = (
+                amount
+                if metadata["direction"] == "borrowed"
+                else -amount
+            )
+            debts_record = get_debts_as_of(
+                user_id, record.get("budget_id"), target_date
+            )
+            debt_cards_total = int(debts_record.get("debt_cards_total", 0))
+            debt_other_total = int(debts_record.get("debt_other_total", 0))
+            if metadata["debt_type"] == "cards":
+                debt_cards_total -= debt_delta
+            else:
+                debt_other_total -= debt_delta
+            upsert_debts(
+                user_id,
+                record.get("budget_id"),
+                target_date,
+                credit_cards=debt_cards_total,
+                people_debts=debt_other_total,
+            )
 
     client.table("transactions").delete().eq("id", tx_id).execute()
