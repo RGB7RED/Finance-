@@ -92,6 +92,18 @@ type FormErrorDetails = {
   responseText?: string;
 };
 
+type DebtMetadata = {
+  debt_type: "people" | "cards";
+  direction: "borrowed" | "repaid";
+  note?: string | null;
+};
+
+type EditingTransaction = {
+  id: string;
+  kind: Transaction["kind"];
+  type: Transaction["type"];
+};
+
 const buildErrorMessage = (fallback: string, error: unknown): string => {
   if (isUnauthorized(error)) {
     return "Сессия истекла, войдите заново";
@@ -160,6 +172,26 @@ const formatShortRuDate = (value: string): string => {
     return value;
   }
   return `${day} ${monthLabel} ${year}`;
+};
+
+const parseDebtMetadata = (note: string | null): DebtMetadata | null => {
+  if (!note) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(note) as DebtMetadata;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      (parsed.debt_type === "people" || parsed.debt_type === "cards") &&
+      (parsed.direction === "borrowed" || parsed.direction === "repaid")
+    ) {
+      return parsed;
+    }
+  } catch (error) {
+    return null;
+  }
+  return null;
 };
 
 export default function HomePage() {
@@ -252,6 +284,8 @@ export default function HomePage() {
     "people",
   );
   const [debtOtherAccountId, setDebtOtherAccountId] = useState("");
+  const [editingTransaction, setEditingTransaction] =
+    useState<EditingTransaction | null>(null);
   const [goalAccountId, setGoalAccountId] = useState("");
   const [goalTitle, setGoalTitle] = useState("");
   const [goalTargetAmount, setGoalTargetAmount] = useState("");
@@ -1112,6 +1146,72 @@ export default function HomePage() {
     }
   };
 
+  const clearEditingTransaction = useCallback(() => {
+    setEditingTransaction(null);
+  }, []);
+
+  const handleEditTransaction = useCallback(
+    (tx: Transaction) => {
+      setActiveTab("ops");
+      setOpsDate(tx.date);
+      setSelectedDate(tx.date);
+      setEditingTransaction({ id: tx.id, kind: tx.kind, type: tx.type });
+      if (tx.kind === "debt") {
+        const debtMetadata = parseDebtMetadata(tx.note);
+        setDebtOtherAmount(String(tx.amount));
+        setDebtOtherDirection(
+          debtMetadata?.direction ??
+            (tx.type === "income" ? "borrowed" : "repaid"),
+        );
+        setDebtOtherType(debtMetadata?.debt_type ?? "people");
+        setDebtOtherAccountId(tx.account_id ?? "");
+        return;
+      }
+      if (tx.type === "income") {
+        setIncomeAccountId(tx.account_id ?? "");
+        setIncomeAmount(String(tx.amount));
+        setIncomeTag(tx.tag);
+        setIncomeNote(tx.note ?? "");
+        return;
+      }
+      if (tx.type === "expense") {
+        setExpenseAccountId(tx.account_id ?? "");
+        setExpenseAmount(String(tx.amount));
+        setExpenseCategoryId(tx.category_id ?? "");
+        setExpenseTag(tx.tag);
+        setExpenseNote(tx.note ?? "");
+        return;
+      }
+      setTransferFromAccountId(tx.account_id ?? "");
+      setTransferToAccountId(tx.to_account_id ?? "");
+      setTransferAmount(String(tx.amount));
+      setTransferNote(tx.note ?? "");
+    },
+    [
+      setActiveTab,
+      setDebtOtherAccountId,
+      setDebtOtherAmount,
+      setDebtOtherDirection,
+      setDebtOtherType,
+      setEditingTransaction,
+      setExpenseAccountId,
+      setExpenseAmount,
+      setExpenseCategoryId,
+      setExpenseNote,
+      setExpenseTag,
+      setIncomeAccountId,
+      setIncomeAmount,
+      setIncomeNote,
+      setIncomeTag,
+      setOpsDate,
+      setSelectedDate,
+      setTransferAmount,
+      setTransferFromAccountId,
+      setTransferNote,
+      setTransferToAccountId,
+    ],
+  );
+
   const handleCreateIncome = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!token || !activeBudgetId) {
@@ -1130,6 +1230,15 @@ export default function HomePage() {
     setIncomeErrorDetails(null);
     const transactionDate = opsDate || selectedDate;
     try {
+      if (
+        editingTransaction &&
+        editingTransaction.type === "income" &&
+        editingTransaction.kind !== "debt"
+      ) {
+        await deleteTransaction(token, editingTransaction.id);
+      } else if (editingTransaction) {
+        clearEditingTransaction();
+      }
       await createTransaction(token, {
         budget_id: activeBudgetId,
         type: "income",
@@ -1142,6 +1251,7 @@ export default function HomePage() {
       rememberLastAccount(incomeAccountId);
       setIncomeAmount("");
       setIncomeNote("");
+      clearEditingTransaction();
       const updatedTransactions = await listTransactions(
         token,
         activeBudgetId,
@@ -1179,6 +1289,15 @@ export default function HomePage() {
     const categoryId = expenseCategoryId ? expenseCategoryId : null;
     const transactionDate = opsDate || selectedDate;
     try {
+      if (
+        editingTransaction &&
+        editingTransaction.type === "expense" &&
+        editingTransaction.kind !== "debt"
+      ) {
+        await deleteTransaction(token, editingTransaction.id);
+      } else if (editingTransaction) {
+        clearEditingTransaction();
+      }
       await createTransaction(token, {
         budget_id: activeBudgetId,
         type: "expense",
@@ -1192,6 +1311,7 @@ export default function HomePage() {
       rememberLastAccount(expenseAccountId);
       setExpenseAmount("");
       setExpenseNote("");
+      clearEditingTransaction();
       const updatedTransactions = await listTransactions(
         token,
         activeBudgetId,
@@ -1232,6 +1352,15 @@ export default function HomePage() {
     setTransferErrorDetails(null);
     const transactionDate = opsDate || selectedDate;
     try {
+      if (
+        editingTransaction &&
+        editingTransaction.type === "transfer" &&
+        editingTransaction.kind !== "debt"
+      ) {
+        await deleteTransaction(token, editingTransaction.id);
+      } else if (editingTransaction) {
+        clearEditingTransaction();
+      }
       await createTransaction(token, {
         budget_id: activeBudgetId,
         type: "transfer",
@@ -1245,6 +1374,7 @@ export default function HomePage() {
       rememberLastAccount(transferFromAccountId);
       setTransferAmount("");
       setTransferNote("");
+      clearEditingTransaction();
       const updatedTransactions = await listTransactions(
         token,
         activeBudgetId,
@@ -1270,6 +1400,9 @@ export default function HomePage() {
     setMessage("");
     try {
       await deleteTransaction(token, txId);
+      if (editingTransaction?.id === txId) {
+        clearEditingTransaction();
+      }
       const updatedTransactions = await listTransactions(
         token,
         activeBudgetId,
@@ -1337,6 +1470,16 @@ export default function HomePage() {
     setDebtOtherErrorDetails(null);
     const transactionDate = opsDate || selectedDate;
     try {
+      if (
+        editingTransaction &&
+        editingTransaction.kind === "debt" &&
+        (editingTransaction.type === "income" ||
+          editingTransaction.type === "expense")
+      ) {
+        await deleteTransaction(token, editingTransaction.id);
+      } else if (editingTransaction) {
+        clearEditingTransaction();
+      }
       await createDebtOther(token, {
         budget_id: activeBudgetId,
         amount,
@@ -1346,11 +1489,18 @@ export default function HomePage() {
         date: transactionDate,
       });
       setDebtOtherAmount("");
+      clearEditingTransaction();
       const [updatedAccounts] = await Promise.all([
         listAccounts(token, activeBudgetId),
         loadDailyStateData(token, activeBudgetId, selectedDate),
       ]);
       setAccounts(updatedAccounts);
+      const updatedTransactions = await listTransactions(
+        token,
+        activeBudgetId,
+        selectedDate,
+      );
+      setTransactions(updatedTransactions);
       if (reportFrom && reportTo && reportFrom <= reportTo) {
         const [balance, summary] = await Promise.all([
           getReportBalance(token, activeBudgetId, reportFrom, reportTo),
@@ -1602,6 +1752,7 @@ export default function HomePage() {
                 categories={categories}
                 accountMap={accountMap}
                 onDeleteTransaction={handleDeleteTransaction}
+                onEditTransaction={handleEditTransaction}
               />
             )}
             {activeTab === "ops" && (
@@ -1660,6 +1811,9 @@ export default function HomePage() {
                 goals={goals}
                 bottomDayTotal={bottomDayTotal}
                 onDeleteTransaction={handleDeleteTransaction}
+                onEditTransaction={handleEditTransaction}
+                editingTransaction={editingTransaction}
+                onCancelEdit={clearEditingTransaction}
               />
             )}
             {activeTab === "reports" && (
@@ -1776,6 +1930,7 @@ type TransactionsCardProps = {
   categories: Category[];
   bottomDayTotal: number;
   onDeleteTransaction: (txId: string) => void;
+  onEditTransaction: (tx: Transaction) => void;
 };
 
 const TransactionsCard = ({
@@ -1789,6 +1944,7 @@ const TransactionsCard = ({
   categories,
   bottomDayTotal,
   onDeleteTransaction,
+  onEditTransaction,
 }: TransactionsCardProps) => (
   <Card title={title}>
     <div className="mf-row">
@@ -1805,6 +1961,7 @@ const TransactionsCard = ({
       goals={goals}
       categories={categories}
       onDeleteTransaction={onDeleteTransaction}
+      onEditTransaction={onEditTransaction}
     />
     {showSummary && (
       <p className="mf-muted">Итог за день (нижний): {bottomDayTotal} ₽</p>
@@ -1859,6 +2016,7 @@ type TransactionsGroupListProps = {
   goals: Goal[];
   categories: Category[];
   onDeleteTransaction: (txId: string) => void;
+  onEditTransaction: (tx: Transaction) => void;
 };
 
 const TransactionsGroupList = ({
@@ -1867,6 +2025,7 @@ const TransactionsGroupList = ({
   goals,
   categories,
   onDeleteTransaction,
+  onEditTransaction,
 }: TransactionsGroupListProps) => {
   const [expandedTransactionId, setExpandedTransactionId] = useState<
     string | null
@@ -1926,6 +2085,14 @@ const TransactionsGroupList = ({
               const toAccountName =
                 (tx.to_account_id && accountMap.get(tx.to_account_id)?.name) ||
                 "Счет";
+              const isDebt = tx.kind === "debt";
+              const debtMetadata = isDebt ? parseDebtMetadata(tx.note) : null;
+              const debtTypeLabel =
+                debtMetadata?.debt_type === "cards"
+                  ? "Кредитки"
+                  : "Людям";
+              const debtDirectionLabel =
+                debtMetadata?.direction === "repaid" ? "Вернул" : "Взял в долг";
               const categoryName =
                 (tx.category_id &&
                   categories.find((cat) => cat.id === tx.category_id)?.name) ||
@@ -1952,19 +2119,23 @@ const TransactionsGroupList = ({
                   : tx.tag === "one_time"
                     ? "Разовый"
                     : "";
-              const primaryLabel =
-                tx.type === "expense" && !isGoalTransfer
+              const primaryLabel = isDebt
+                ? `Долг: ${debtTypeLabel}`
+                : tx.type === "expense" && !isGoalTransfer
                   ? categoryName ?? "Без категории"
                   : tx.type === "transfer"
                     ? "Перевод"
                     : tagLabel || "Без тега";
               const typeLabel = isGoalTransfer
                 ? "Перевод цели"
-                : tx.type === "income"
-                  ? "Доход"
-                  : tx.type === "expense"
-                    ? "Расход"
-                    : "Перевод";
+                : isDebt
+                  ? "Долг"
+                  : tx.type === "income"
+                    ? "Доход"
+                    : tx.type === "expense"
+                      ? "Расход"
+                      : "Перевод";
+              const noteLabel = isDebt ? debtMetadata?.note ?? null : tx.note;
 
               return (
                 <div key={tx.id} className="mf-transaction-row">
@@ -1993,6 +2164,18 @@ const TransactionsGroupList = ({
                         <span className="mf-small">Тип</span>
                         <span>{typeLabel}</span>
                       </div>
+                      {isDebt && (
+                        <>
+                          <div className="mf-transaction-details__row">
+                            <span className="mf-small">Направление</span>
+                            <span>{debtDirectionLabel}</span>
+                          </div>
+                          <div className="mf-transaction-details__row">
+                            <span className="mf-small">Тип долга</span>
+                            <span>{debtTypeLabel}</span>
+                          </div>
+                        </>
+                      )}
                       <div className="mf-transaction-details__row">
                         <span className="mf-small">Счёт</span>
                         <span>
@@ -2001,23 +2184,25 @@ const TransactionsGroupList = ({
                             : accountName}
                         </span>
                       </div>
-                      <div className="mf-transaction-details__row">
-                        <span className="mf-small">
-                          {tx.type === "expense" ? "Категория" : "Тег"}
-                        </span>
-                        <span>
-                          {tx.type === "expense"
-                            ? categoryName ?? "Без категории"
-                            : tagLabel || "Без тега"}
-                        </span>
-                      </div>
+                      {!isDebt && (
+                        <div className="mf-transaction-details__row">
+                          <span className="mf-small">
+                            {tx.type === "expense" ? "Категория" : "Тег"}
+                          </span>
+                          <span>
+                            {tx.type === "expense"
+                              ? categoryName ?? "Без категории"
+                              : tagLabel || "Без тега"}
+                          </span>
+                        </div>
+                      )}
                       <div className="mf-transaction-details__row">
                         <span className="mf-small">Дата</span>
                         <span>{formatShortRuDate(tx.date)}</span>
                       </div>
                       <div className="mf-transaction-details__row">
                         <span className="mf-small">Заметка</span>
-                        <span>{tx.note || "—"}</span>
+                        <span>{noteLabel || "—"}</span>
                       </div>
                       {isGoalTransfer && (
                         <div className="mf-transaction-details__row">
@@ -2026,6 +2211,13 @@ const TransactionsGroupList = ({
                         </div>
                       )}
                       <div className="mf-transaction-details__actions">
+                        <Button
+                          variant="secondary"
+                          className="mf-button--small"
+                          onClick={() => onEditTransaction(tx)}
+                        >
+                          Редактировать
+                        </Button>
                         <Button
                           variant="danger"
                           className="mf-button--small"
@@ -2075,6 +2267,7 @@ type DayTabProps = {
   categories: Category[];
   accountMap: Map<string, Account>;
   onDeleteTransaction: (txId: string) => void;
+  onEditTransaction: (tx: Transaction) => void;
 };
 
 const DayTab = ({
@@ -2103,6 +2296,7 @@ const DayTab = ({
   categories,
   accountMap,
   onDeleteTransaction,
+  onEditTransaction,
 }: DayTabProps) => (
   <div className="mf-stack">
     <div
@@ -2284,6 +2478,7 @@ const DayTab = ({
         goals={goals}
         categories={categories}
         onDeleteTransaction={onDeleteTransaction}
+        onEditTransaction={onEditTransaction}
       />
     </Card>
   </div>
@@ -2344,6 +2539,9 @@ type OpsTabProps = {
   goals: Goal[];
   bottomDayTotal: number;
   onDeleteTransaction: (txId: string) => void;
+  onEditTransaction: (tx: Transaction) => void;
+  editingTransaction: EditingTransaction | null;
+  onCancelEdit: () => void;
 };
 
 const OpsTab = ({
@@ -2401,8 +2599,21 @@ const OpsTab = ({
   goals,
   bottomDayTotal,
   onDeleteTransaction,
+  onEditTransaction,
+  editingTransaction,
+  onCancelEdit,
 }: OpsTabProps) => (
   <div className="mf-stack">
+    {editingTransaction && (
+      <Card title="Редактирование операции">
+        <div className="mf-row">
+          <p className="mf-muted">Вы редактируете выбранную операцию.</p>
+          <Button variant="secondary" onClick={onCancelEdit}>
+            Отменить
+          </Button>
+        </div>
+      </Card>
+    )}
     <Card title="Добавить доход">
       {!hasAccounts && (
         <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
@@ -2723,6 +2934,7 @@ const OpsTab = ({
       categories={categories}
       bottomDayTotal={bottomDayTotal}
       onDeleteTransaction={onDeleteTransaction}
+      onEditTransaction={onEditTransaction}
     />
   </div>
 );

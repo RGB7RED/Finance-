@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 import logging
 from typing import Literal, Optional
 
@@ -72,7 +73,7 @@ class CategoryCreateRequest(BaseModel):
 class TransactionCreate(BaseModel):
     budget_id: str
     type: Literal["income", "expense", "transfer"]
-    kind: Literal["normal", "transfer", "goal_transfer"] | None = None
+    kind: Literal["normal", "transfer", "goal_transfer", "debt"] | None = None
     amount: int = Field(gt=0)
     date: dt.date
     account_id: str | None = None
@@ -89,7 +90,7 @@ class TransactionOut(BaseModel):
     user_id: str
     date: dt.date
     type: Literal["income", "expense", "transfer"]
-    kind: Literal["normal", "transfer", "goal_transfer"]
+    kind: Literal["normal", "transfer", "goal_transfer", "debt"]
     amount: int
     account_id: str | None = None
     to_account_id: str | None = None
@@ -476,19 +477,32 @@ def post_debts_other(
             detail="Нельзя уменьшить долг ниже 0",
         )
 
+    create_transaction(
+        current_user["sub"],
+        {
+            "budget_id": payload.budget_id,
+            "type": "income" if payload.direction == "borrowed" else "expense",
+            "kind": "debt",
+            "amount": payload.amount,
+            "date": target_date,
+            "account_id": payload.account_id,
+            "tag": "one_time",
+            "note": json.dumps(
+                {
+                    "debt_type": payload.debt_type,
+                    "direction": payload.direction,
+                    "note": payload.note,
+                }
+            ),
+        },
+    )
+
     upsert_debts(
         current_user["sub"],
         payload.budget_id,
         target_date,
         credit_cards=debt_cards_total,
         people_debts=debt_other_total,
-    )
-    upsert_manual_adjust_event(
-        current_user["sub"],
-        payload.budget_id,
-        target_date,
-        payload.account_id,
-        next_amount,
     )
     return _build_daily_state_response(
         current_user["sub"], payload.budget_id, target_date
