@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import csv
 import datetime as dt
+import io
 import json
 import logging
 from typing import Any
 
+import openpyxl
+import pdfplumber
+import xlrd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from app.auth.jwt import get_current_user
@@ -31,20 +36,101 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai")
 
 
-def _ensure_csv(file: UploadFile) -> None:
+def _ensure_supported_statement(file: UploadFile) -> None:
     content_type = (file.content_type or "").lower()
     filename = (file.filename or "").lower()
     is_csv = "csv" in content_type or filename.endswith(".csv")
     is_text = content_type.startswith("text/")
-    if not (is_csv or is_text):
+    is_pdf = "pdf" in content_type or filename.endswith(".pdf")
+    is_xlsx = (
+        "spreadsheetml.sheet" in content_type or filename.endswith(".xlsx")
+    )
+    is_xls = "ms-excel" in content_type or filename.endswith(".xls")
+    if not (is_csv or is_text or is_xlsx or is_xls or is_pdf):
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Поддерживаются только CSV/текстовые выписки. "
-            "Сохраните файл в CSV и попробуйте снова.",
+            detail="Поддерживаются только PDF, XLS/XLSX или CSV выписки. "
+            "Сохраните файл в поддерживаемом формате и попробуйте снова.",
         )
 
 
-def _decode_statement(raw_bytes: bytes) -> str:
+def _cell_to_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _rows_to_csv(rows: list[list[Any]]) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    for row in rows:
+        writer.writerow([_cell_to_text(cell) for cell in row])
+    return buffer.getvalue()
+
+
+def _clean_pdf_text(raw_text: str) -> str:
+    lines = []
+    for line in raw_text.splitlines():
+        cleaned = " ".join(line.split()).strip()
+        if cleaned:
+            lines.append(cleaned)
+    return "\n".join(lines)
+
+
+def _extract_pdf_text(raw_bytes: bytes) -> str | None:
+    with pdfplumber.open(io.BytesIO(raw_bytes)) as pdf:
+        pages_text = []
+        for page in pdf.pages:
+            page_text = page.extract_text() or ""
+            if page_text:
+                pages_text.append(page_text)
+            tables = page.extract_tables() or []
+            for table in tables:
+                rows = []
+                for row in table:
+                    rows.append(
+                        " | ".join((cell or "").strip() for cell in row)
+                    )
+                if rows:
+                    pages_text.append("\n".join(rows))
+    cleaned = _clean_pdf_text("\n".join(pages_text))
+    return cleaned or None
+
+
+def _decode_xlsx(raw_bytes: bytes) -> str:
+    workbook = openpyxl.load_workbook(
+        filename=io.BytesIO(raw_bytes), data_only=True
+    )
+    sheet = workbook.active
+    rows = list(sheet.iter_rows(values_only=True))
+    table = _rows_to_csv([list(row) for row in rows])
+    return f"Sheet: {sheet.title}\n{table}".strip()
+
+
+def _decode_xls(raw_bytes: bytes) -> str:
+    workbook = xlrd.open_workbook(file_contents=raw_bytes)
+    sheet = workbook.sheet_by_index(0)
+    rows = [sheet.row_values(row_idx) for row_idx in range(sheet.nrows)]
+    table = _rows_to_csv(rows)
+    return f"Sheet: {sheet.name}\n{table}".strip()
+
+
+def _decode_statement(file: UploadFile, raw_bytes: bytes) -> str:
+    content_type = (file.content_type or "").lower()
+    filename = (file.filename or "").lower()
+    if "pdf" in content_type or filename.endswith(".pdf"):
+        extracted = _extract_pdf_text(raw_bytes)
+        if not extracted:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="⚠️ Не удалось корректно извлечь данные из PDF. "
+                "Проверь, что файл — текстовый, а не скан.",
+            )
+        return extracted
+    if "spreadsheetml.sheet" in content_type or filename.endswith(".xlsx"):
+        return _decode_xlsx(raw_bytes)
+    if "ms-excel" in content_type or filename.endswith(".xls"):
+        return _decode_xls(raw_bytes)
     return raw_bytes.decode("utf-8", errors="replace")
 
 
@@ -78,11 +164,13 @@ def _normalize_transactions(
     draft_payload: dict[str, Any],
     accounts: list[dict[str, Any]],
     categories: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]], list[dict[str, Any]]]:
     warnings: list[str] = []
     account_map = _account_name_map(accounts)
     category_map = _category_name_map(categories)
     normalized: list[dict[str, Any]] = []
+    missing_accounts: dict[str, dict[str, Any]] = {}
+    missing_categories: dict[str, dict[str, Any]] = {}
     for item in draft_payload.get("transactions") or []:
         account_name = (item.get("account_name") or "").strip().lower()
         to_account_name = (item.get("to_account_name") or "").strip().lower()
@@ -92,14 +180,29 @@ def _normalize_transactions(
         category_id = category_map.get(category_name) if category_name else None
         if account_name and not account_id:
             warnings.append(f"Счет не найден: {item.get('account_name')}")
+            if account_name not in missing_accounts:
+                missing_accounts[account_name] = {
+                    "name": item.get("account_name"),
+                    "kind": item.get("account_kind") or "bank",
+                }
         if to_account_name and not to_account_id:
             warnings.append(
                 f"Счет назначения не найден: {item.get('to_account_name')}"
             )
+            if to_account_name not in missing_accounts:
+                missing_accounts[to_account_name] = {
+                    "name": item.get("to_account_name"),
+                    "kind": item.get("to_account_kind") or "bank",
+                }
         if category_name and not category_id:
             warnings.append(
                 f"Категория не найдена: {item.get('category_name')}"
             )
+            if category_name not in missing_categories:
+                missing_categories[category_name] = {
+                    "name": item.get("category_name"),
+                    "type": item.get("category_type") or "expense",
+                }
         normalized.append(
             {
                 "date": item.get("date"),
@@ -117,7 +220,12 @@ def _normalize_transactions(
                 "category_name": item.get("category_name"),
             }
         )
-    return normalized, warnings
+    return (
+        normalized,
+        warnings,
+        list(missing_accounts.values()),
+        list(missing_categories.values()),
+    )
 
 
 @router.post("/statement-drafts")
@@ -142,12 +250,12 @@ async def post_statement_draft(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Statement file or text is required",
             )
-        _ensure_csv(file)
+        _ensure_supported_statement(file)
         raw = await file.read()
         source_filename = file.filename
         source_mime = file.content_type
         source_value = None
-        statement_text_value = _decode_statement(raw)
+        statement_text_value = _decode_statement(file, raw)
     as_of = statement_date or dt.date.today()
     context = _build_context(current_user["sub"], budget_id, as_of)
     if source_value:
@@ -158,13 +266,25 @@ async def post_statement_draft(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
         ) from exc
+    if draft_payload.get("notes"):
+        draft_payload.setdefault("warnings", [])
+        draft_payload["warnings"].extend(draft_payload.get("notes") or [])
     accounts = list_accounts(current_user["sub"], budget_id, as_of)
     categories = list_categories(current_user["sub"], budget_id)
     draft_payload["context"] = context
-    normalized_transactions, warnings = _normalize_transactions(
+    (
+        normalized_transactions,
+        warnings,
+        missing_accounts,
+        missing_categories,
+    ) = _normalize_transactions(
         draft_payload, accounts, categories
     )
     draft_payload["normalized_transactions"] = normalized_transactions
+    if missing_accounts:
+        draft_payload["missing_accounts"] = missing_accounts
+    if missing_categories:
+        draft_payload["missing_categories"] = missing_categories
     if source_value:
         draft_payload["source"] = source_value
     if warnings:
@@ -205,13 +325,25 @@ def revise_statement_draft(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
         ) from exc
+    if revised_payload.get("notes"):
+        revised_payload.setdefault("warnings", [])
+        revised_payload["warnings"].extend(revised_payload.get("notes") or [])
     revised_payload["context"] = context
     accounts = list_accounts(current_user["sub"], draft["budget_id"])
     categories = list_categories(current_user["sub"], draft["budget_id"])
-    normalized_transactions, warnings = _normalize_transactions(
+    (
+        normalized_transactions,
+        warnings,
+        missing_accounts,
+        missing_categories,
+    ) = _normalize_transactions(
         revised_payload, accounts, categories
     )
     revised_payload["normalized_transactions"] = normalized_transactions
+    if missing_accounts:
+        revised_payload["missing_accounts"] = missing_accounts
+    if missing_categories:
+        revised_payload["missing_categories"] = missing_categories
     if warnings:
         revised_payload["warnings"] = warnings
     updated = update_statement_draft(
@@ -243,18 +375,91 @@ def apply_statement_draft(
     transactions = payload.get("normalized_transactions") or []
     errors: list[str] = []
     created: list[dict[str, Any]] = []
+    missing_accounts = payload.get("missing_accounts") or []
+    missing_categories = payload.get("missing_categories") or []
+    as_of = dt.date.today()
+    if missing_categories:
+        categories = list_categories(current_user["sub"], draft["budget_id"])
+        category_map = _category_name_map(categories)
+        from app.repositories.categories import create_category
+
+        for item in missing_categories:
+            name = (item.get("name") or "").strip()
+            if not name:
+                continue
+            if name.lower() in category_map:
+                continue
+            created_category = create_category(
+                current_user["sub"], draft["budget_id"], name
+            )
+            category_map[name.lower()] = created_category["id"]
+    if missing_accounts:
+        accounts = list_accounts(
+            current_user["sub"], draft["budget_id"], as_of
+        )
+        account_map = _account_name_map(accounts)
+        from app.repositories.accounts import create_account
+
+        for item in missing_accounts:
+            name = (item.get("name") or "").strip()
+            if not name:
+                continue
+            if name.lower() in account_map:
+                continue
+            kind = (item.get("kind") or "bank").lower()
+            if kind == "card":
+                kind = "bank"
+            if kind not in ("cash", "bank"):
+                kind = "bank"
+            created_account = create_account(
+                current_user["sub"],
+                draft["budget_id"],
+                name,
+                kind,
+                as_of,
+                0,
+            )
+            account_map[name.lower()] = created_account["id"]
+    accounts = list_accounts(current_user["sub"], draft["budget_id"], as_of)
+    categories = list_categories(current_user["sub"], draft["budget_id"])
+    account_map = _account_name_map(accounts)
+    category_map = _category_name_map(categories)
+    if any(
+        item.get("type") == "expense"
+        and not (item.get("category_name") or "").strip()
+        for item in transactions
+    ):
+        from app.repositories.categories import create_category
+
+        if "прочее" not in category_map:
+            created_category = create_category(
+                current_user["sub"], draft["budget_id"], "Прочее"
+            )
+            category_map["прочее"] = created_category["id"]
     for item in transactions:
+        if not item.get("account_id"):
+            account_name = (item.get("account_name") or "").strip().lower()
+            item["account_id"] = account_map.get(account_name)
         if not item.get("account_id"):
             errors.append(
                 f"Не найден счет для транзакции: {item.get('account_name')}"
             )
             continue
         if item.get("type") == "transfer" and not item.get("to_account_id"):
+            to_account_name = (item.get("to_account_name") or "").strip().lower()
+            item["to_account_id"] = account_map.get(to_account_name)
+        if item.get("type") == "transfer" and not item.get("to_account_id"):
             errors.append(
                 "Не найден счет назначения для перевода: "
                 f"{item.get('to_account_name')}"
             )
             continue
+        if item.get("type") == "expense" and not item.get("category_id"):
+            category_name = (item.get("category_name") or "").strip().lower()
+            if category_name:
+                item["category_id"] = category_map.get(category_name)
+            else:
+                item["category_id"] = category_map.get("прочее")
         tx_payload = {
             "budget_id": draft["budget_id"],
             "type": item.get("type"),

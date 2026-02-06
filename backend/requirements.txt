@@ -8,3 +8,5 @@ httpx
 python-multipart
 python-telegram-bot
 pdfplumber
+openpyxl
+xlrd
