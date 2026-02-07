@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import csv
 import io
 import json
 import logging
@@ -74,6 +75,116 @@ def _extract_pdf_text(raw_bytes: bytes) -> str | None:
                     pages_text.append("\n".join(rows))
     cleaned = _clean_pdf_text("\n".join(pages_text))
     return cleaned or None
+
+
+def _coerce_number(value: str | None) -> float | None:
+    if value is None:
+        return None
+    cleaned = value.replace("\u00a0", " ").strip()
+    if not cleaned:
+        return None
+    normalized = cleaned.replace(" ", "").replace(",", ".")
+    try:
+        return float(normalized)
+    except ValueError:
+        return None
+
+
+def _parse_csv_rows(raw_bytes: bytes) -> list[dict[str, str]]:
+    decoded = raw_bytes.decode("utf-8", errors="replace")
+    sample = decoded[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample)
+    except csv.Error:
+        dialect = csv.excel
+    try:
+        has_header = csv.Sniffer().has_header(sample)
+    except csv.Error:
+        has_header = True
+    buffer = io.StringIO(decoded)
+    if has_header:
+        reader = csv.DictReader(buffer, dialect=dialect)
+        rows: list[dict[str, str]] = []
+        for row in reader:
+            normalized = {
+                (key or "").strip(): (value or "").strip()
+                for key, value in row.items()
+            }
+            rows.append(normalized)
+        return rows
+    reader = csv.reader(buffer, dialect=dialect)
+    rows = []
+    for row in reader:
+        normalized_row = {
+            f"column_{index + 1}": (value or "").strip()
+            for index, value in enumerate(row)
+        }
+        rows.append(normalized_row)
+    return rows
+
+
+def _normalize_csv_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+    date_keys = {"date", "дата", "operation date", "transaction date"}
+    amount_keys = {"amount", "сумма", "sum", "amount_rub"}
+    balance_keys = {"balance", "остаток", "баланс", "saldo"}
+    description_keys = {
+        "description",
+        "описание",
+        "назначение",
+        "details",
+        "comment",
+        "memo",
+    }
+    debit_keys = {"debit", "дебет", "расход"}
+    credit_keys = {"credit", "кредит", "приход"}
+    normalized_rows: list[dict[str, Any]] = []
+    for row in rows:
+        lowered = {key.lower(): value for key, value in row.items()}
+        date_value = next(
+            (lowered[key] for key in date_keys if key in lowered), None
+        )
+        amount_value = next(
+            (lowered[key] for key in amount_keys if key in lowered), None
+        )
+        description_value = next(
+            (lowered[key] for key in description_keys if key in lowered), None
+        )
+        balance_value = next(
+            (lowered[key] for key in balance_keys if key in lowered), None
+        )
+        debit_value = next(
+            (lowered[key] for key in debit_keys if key in lowered), None
+        )
+        credit_value = next(
+            (lowered[key] for key in credit_keys if key in lowered), None
+        )
+        amount_number = _coerce_number(amount_value)
+        if amount_number is None:
+            debit_number = _coerce_number(debit_value)
+            credit_number = _coerce_number(credit_value)
+            if debit_number is not None:
+                amount_number = -abs(debit_number)
+            elif credit_number is not None:
+                amount_number = abs(credit_number)
+        normalized_rows.append(
+            {
+                "date": date_value,
+                "amount": amount_number,
+                "description": description_value,
+                "balance": _coerce_number(balance_value),
+                "raw": row,
+            }
+        )
+    return normalized_rows
+
+
+def _pdf_text_to_rows(statement_text: str) -> list[dict[str, Any]]:
+    rows = []
+    for line in statement_text.splitlines():
+        cleaned = " ".join(line.split()).strip()
+        if cleaned:
+            rows.append({"raw": cleaned})
+    return rows
 
 
 def _decode_statement(file: UploadFile, raw_bytes: bytes) -> str:
@@ -286,6 +397,7 @@ async def post_statement_draft(
         source_mime = source or "text/plain"
         source_value = source
         statement_text_value = statement_text
+        rows_parsed = None
     else:
         if not file:
             raise HTTPException(
@@ -297,7 +409,48 @@ async def post_statement_draft(
         source_filename = file.filename
         source_mime = file.content_type
         source_value = None
-        statement_text_value = _decode_statement(file, raw)
+        content_type = (file.content_type or "").lower()
+        filename = (file.filename or "").lower()
+        is_csv = "csv" in content_type or filename.endswith(".csv")
+        is_pdf = "pdf" in content_type or filename.endswith(".pdf")
+        if is_csv:
+            csv_rows = _parse_csv_rows(raw)
+            normalized_rows = _normalize_csv_rows(csv_rows)
+            rows_parsed = len(normalized_rows)
+            statement_payload = {
+                "source_type": "csv",
+                "rows": normalized_rows,
+            }
+            statement_text_value = json.dumps(
+                statement_payload, ensure_ascii=False
+            )
+        elif is_pdf:
+            statement_text = _decode_statement(file, raw)
+            pdf_rows = _pdf_text_to_rows(statement_text)
+            rows_parsed = len(pdf_rows)
+            statement_payload = {
+                "source_type": "pdf",
+                "rows": pdf_rows,
+            }
+            statement_text_value = json.dumps(
+                statement_payload, ensure_ascii=False
+            )
+        else:
+            statement_text_value = _decode_statement(file, raw)
+            text_rows = _pdf_text_to_rows(statement_text_value)
+            rows_parsed = len(text_rows)
+            statement_payload = {
+                "source_type": "text",
+                "rows": text_rows,
+            }
+            statement_text_value = json.dumps(
+                statement_payload, ensure_ascii=False
+            )
+        logger.info(
+            "Statement import: rows_parsed=%d, file_name=%s",
+            rows_parsed,
+            source_filename,
+        )
     as_of = statement_date or dt.date.today()
     context = _build_context(current_user["sub"], budget_id, as_of)
     if source_value:
@@ -353,6 +506,17 @@ async def post_statement_draft(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="LLM response does not match contract",
+        )
+    operations_returned = len(draft_payload.get("operations") or [])
+    logger.info(
+        "Statement draft: operations_returned=%d",
+        operations_returned,
+    )
+    if rows_parsed is not None and rows_parsed > operations_returned:
+        logger.error(
+            "Data loss detected: CSV rows=%d, operations=%d",
+            rows_parsed,
+            operations_returned,
         )
     accounts = list_accounts(current_user["sub"], budget_id, as_of)
     categories = list_categories(current_user["sub"], budget_id)
