@@ -35,13 +35,25 @@ def generate_statement_draft(
     system_prompt = (
         "Ты финансовый ассистент. Твоя задача — разобрать банковскую выписку "
         "и предложить черновик изменений. Всегда отвечай валидным JSON без "
-        "комментариев и без Markdown. Формат ответа:\n"
+        "комментариев и без Markdown.\n\n"
+        "Критичные правила:\n"
+        "- НЕ использовать OCR. Если PDF выглядит как скан, укажи это в notes.\n"
+        "- Обработай ВСЕ страницы и ВСЕ операции, ничего не пропускай.\n"
+        "- Типы операций строго: income, expense, transfer, fee.\n"
+        "- Переводы («Перевод от/для», «Перевод СБП») всегда transfer.\n"
+        "- Переводы не являются доходом/расходом.\n"
+        "- Комиссии банка — fee.\n"
+        "- Основной счет выписки обязан быть указан (карта/счет).\n"
+        "- Люди (имена с инициалами/ФИО) — это контрагенты, НЕ счета.\n"
+        "- Категорию из выписки создавать можно: не пиши warning, если она создается.\n"
+        "- Балансы не искажать: проверяй сумму операций и остатки.\n\n"
+        "Формат ответа:\n"
         "{\n"
         '  "summary": "короткое описание",\n'
         '  "transactions": [\n'
         "    {\n"
         '      "date": "YYYY-MM-DD",\n'
-        '      "type": "income|expense|transfer",\n'
+        '      "type": "income|expense|transfer|fee",\n'
         '      "kind": "normal|transfer|goal_transfer|debt",\n'
         '      "amount": 12345,\n'
         '      "account_name": "название счета",\n'
@@ -49,9 +61,11 @@ def generate_statement_draft(
         '      "to_account_name": "название счета назначения или null",\n'
         '      "to_account_kind": "cash|bank|card|null",\n'
         '      "category_name": "категория или null",\n'
-        '      "category_type": "expense|null",\n'
+        '      "category_type": "expense|income|null",\n'
         '      "tag": "one_time|subscription",\n'
         '      "note": "краткая заметка или null",\n'
+        '      "balance_after": 0,\n'
+        '      "counterparty": "контрагент или null",\n'
         '      "debt": {"direction": "borrowed|repaid", "debt_type": "people|cards"}\n'
         "    }\n"
         "  ],\n"
@@ -67,6 +81,22 @@ def generate_statement_draft(
         '    "date": "YYYY-MM-DD",\n'
         '    "credit_cards_total": 0,\n'
         '    "people_debts_total": 0\n'
+        "  },\n"
+        '  "counterparties": ["контрагенты, если есть"],\n'
+        '  "statement_stats": {\n'
+        '    "total": 0,\n'
+        '    "by_type": {"income": 0, "expense": 0, "transfer": 0, "fee": 0},\n'
+        '    "unparsed": [{"count": 0, "reason": "почему не распознано"}]\n'
+        "  },\n"
+        '  "balance_check": {\n'
+        '    "opening_balance": 0,\n'
+        '    "closing_balance": 0,\n'
+        '    "income_total": 0,\n'
+        '    "expense_total": 0,\n'
+        '    "transfer_net": 0,\n'
+        '    "fee_total": 0,\n'
+        '    "difference": 0,\n'
+        '    "is_balanced": true\n'
         "  },\n"
         '  "notes": ["предупреждения или пустой массив"]\n'
         "}\n"

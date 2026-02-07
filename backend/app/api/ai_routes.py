@@ -179,25 +179,18 @@ def _normalize_transactions(
         to_account_id = account_map.get(to_account_name) if to_account_name else None
         category_id = category_map.get(category_name) if category_name else None
         if account_name and not account_id:
-            warnings.append(f"Счет не найден: {item.get('account_name')}")
             if account_name not in missing_accounts:
                 missing_accounts[account_name] = {
                     "name": item.get("account_name"),
                     "kind": item.get("account_kind") or "bank",
                 }
         if to_account_name and not to_account_id:
-            warnings.append(
-                f"Счет назначения не найден: {item.get('to_account_name')}"
-            )
             if to_account_name not in missing_accounts:
                 missing_accounts[to_account_name] = {
                     "name": item.get("to_account_name"),
                     "kind": item.get("to_account_kind") or "bank",
                 }
         if category_name and not category_id:
-            warnings.append(
-                f"Категория не найдена: {item.get('category_name')}"
-            )
             if category_name not in missing_categories:
                 missing_categories[category_name] = {
                     "name": item.get("category_name"),
@@ -215,6 +208,8 @@ def _normalize_transactions(
                 "tag": item.get("tag"),
                 "note": item.get("note"),
                 "debt": item.get("debt"),
+                "balance_after": item.get("balance_after"),
+                "counterparty": item.get("counterparty"),
                 "account_name": item.get("account_name"),
                 "to_account_name": item.get("to_account_name"),
                 "category_name": item.get("category_name"),
@@ -460,6 +455,10 @@ def apply_statement_draft(
                 item["category_id"] = category_map.get(category_name)
             else:
                 item["category_id"] = category_map.get("прочее")
+        if item.get("type") == "fee" and not item.get("category_id"):
+            category_name = (item.get("category_name") or "").strip().lower()
+            if category_name:
+                item["category_id"] = category_map.get(category_name)
         tx_payload = {
             "budget_id": draft["budget_id"],
             "type": item.get("type"),

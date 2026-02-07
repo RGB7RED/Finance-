@@ -381,16 +381,24 @@ def _build_draft_message(payload: dict[str, Any]) -> str:
     warnings = payload.get("warnings") or []
     missing_accounts = payload.get("missing_accounts") or []
     missing_categories = payload.get("missing_categories") or []
+    counterparties = payload.get("counterparties") or []
     expenses = [tx for tx in transactions if tx.get("type") == "expense"]
+    fees = [tx for tx in transactions if tx.get("type") == "fee"]
     incomes = [tx for tx in transactions if tx.get("type") == "income"]
+    transfers = [tx for tx in transactions if tx.get("type") == "transfer"]
     expense_total = sum(_extract_amount(tx.get("amount")) for tx in expenses)
+    fee_total = sum(_extract_amount(tx.get("amount")) for tx in fees)
     income_total = sum(_extract_amount(tx.get("amount")) for tx in incomes)
-    net_total = income_total - expense_total
+    net_total = income_total - expense_total - fee_total
     account_totals: dict[str, float] = {}
     for tx in transactions:
         amount = _extract_amount(tx.get("amount"))
         account_name = tx.get("account_name") or "Без счета"
         if tx.get("type") == "expense":
+            account_totals[account_name] = account_totals.get(
+                account_name, 0.0
+            ) - amount
+        elif tx.get("type") == "fee":
             account_totals[account_name] = account_totals.get(
                 account_name, 0.0
             ) - amount
@@ -410,56 +418,45 @@ def _build_draft_message(payload: dict[str, Any]) -> str:
     ]
     if not account_lines:
         account_lines = ["— (нет)"]
-    missing_desc = sum(
-        1
-        for tx in normalized
-        if not (tx.get("note") or "").strip()
-        and not (tx.get("category_name") or "").strip()
-    )
-    missing_category = sum(
-        1
-        for tx in normalized
-        if tx.get("type") == "expense"
-        and not (tx.get("category_name") or "").strip()
-    )
     lines = [
         "🤖 Я подготовил черновик выписки\n",
-        "📊 Операции:",
-        f"— Найдено: {len(transactions)}",
+        "1️⃣ Количество операций (всего / по типам)",
+        f"— Всего: {len(transactions)}",
+        f"— Доходы: {len(incomes)}",
         f"— Расходы: {len(expenses)}",
-        f"— Доходы: {len(incomes)}\n",
-        "💰 Итоги:",
-        f"— Расходы: {_format_signed_amount(-expense_total)}",
+        f"— Переводы: {len(transfers)}",
+        f"— Комиссии: {len(fees)}\n",
+        "2️⃣ Итоги (income / expense / net)",
         f"— Доходы: {_format_signed_amount(income_total)}",
+        f"— Расходы: {_format_signed_amount(-expense_total)}",
+        f"— Комиссии: {_format_signed_amount(-fee_total)}",
         f"— Чистый итог: {_format_signed_amount(net_total)}\n",
-        "🏦 Счета:",
+        "3️⃣ Счета и их изменение",
         *account_lines,
     ]
     if missing_accounts:
-        lines.append("\n➕ Будут созданы новые счета:")
+        lines.append("\n4️⃣ Что будет создано")
+        lines.append("— Счета:")
         for item in missing_accounts:
             name = item.get("name") or "Без названия"
             kind = item.get("kind") or "bank"
             lines.append(f"— {name} (тип: {kind})")
     if missing_categories:
-        lines.append("\n➕ Будут созданы новые категории:")
+        if not missing_accounts:
+            lines.append("\n4️⃣ Что будет создано")
+        lines.append("— Категории:")
         for item in missing_categories:
             name = item.get("name") or "Без названия"
             lines.append(f"— {name}")
-    attention: list[str] = []
-    if missing_desc:
-        attention.append(f"{missing_desc} операции без описания")
-    if missing_category:
-        attention.append(
-            f"{missing_category} операции без точной категории "
-            "(будет отнесена в «Прочее»)"
-        )
+    if counterparties:
+        lines.append("\n5️⃣ Контрагенты")
+        for name in counterparties:
+            lines.append(f"— {name}")
     if warnings:
-        attention.extend(warnings)
-    if attention:
-        lines.append("\n⚠️ Обрати внимание:")
-        lines.append(_format_warnings(attention))
-    lines.append("\n❓ Применить изменения? Напишите: Да / Отмена")
+        lines.append("\n6️⃣ Warnings")
+        lines.append(_format_warnings(warnings))
+    lines.append("\n7️⃣ Вопрос подтверждения")
+    lines.append("❓ Применить изменения? Напишите: Да / Отмена")
     return "\n".join(lines)
 
 

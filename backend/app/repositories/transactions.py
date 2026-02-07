@@ -150,7 +150,7 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Transfers must have kind=transfer",
         )
-    if tx_type in ("income", "expense") and kind == "transfer":
+    if tx_type in ("income", "expense", "fee") and kind == "transfer":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Income/expense cannot have kind=transfer",
@@ -174,16 +174,16 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Transfers cannot have a category",
             )
-    elif tx_type in ("income", "expense"):
+    elif tx_type in ("income", "expense", "fee"):
         if not account_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="account_id is required for income/expense",
+                detail="account_id is required for income/expense/fee",
             )
         if to_account_id is not None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="to_account_id must be null for income/expense",
+                detail="to_account_id must be null for income/expense/fee",
             )
         _ensure_account_in_budget(budget_id, account_id, "account")
         if tx_type == "income" and category_id is not None:
@@ -191,7 +191,7 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Income cannot have a category",
             )
-        if tx_type == "expense" and category_id is not None:
+        if tx_type in ("expense", "fee") and category_id is not None:
             _ensure_category_in_budget(budget_id, category_id)
     else:
         raise HTTPException(
@@ -309,7 +309,7 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     if not data:
         raise RuntimeError("Failed to create transaction in Supabase")
     transaction = data[0]
-    if tx_type in ("income", "expense"):
+    if tx_type in ("income", "expense", "fee"):
         target_date = _parse_payload_date(payload.get("date"))
         amount = int(payload.get("amount", 0))
         delta = amount if tx_type == "income" else -amount
