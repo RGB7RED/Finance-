@@ -22,6 +22,8 @@ from app.core.config import get_telegram_bot_token, settings
 
 logger = logging.getLogger(__name__)
 
+MAX_TELEGRAM_MESSAGE_LEN = 3800
+
 STATE_WAITING_STATEMENT_FILE = "WAITING_STATEMENT_FILE"
 STATE_WAITING_STATEMENT_FEEDBACK = "WAITING_STATEMENT_FEEDBACK"
 STATE_WAITING_STATEMENT_CONFIRM = "WAITING_STATEMENT_CONFIRM"
@@ -72,6 +74,21 @@ PDF_MIN_ALNUM_RATIO = 0.3
 class DraftContext:
     draft_id: str
     budget_id: str
+
+
+def split_text(
+    text: str, max_len: int = MAX_TELEGRAM_MESSAGE_LEN
+) -> list[str]:
+    parts = []
+    while len(text) > max_len:
+        split_at = text.rfind("\n", 0, max_len)
+        if split_at == -1:
+            split_at = max_len
+        parts.append(text[:split_at])
+        text = text[split_at:].lstrip()
+    if text:
+        parts.append(text)
+    return parts
 
 
 def build_application(token: str) -> Application:
@@ -537,6 +554,11 @@ def _build_draft_message(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+async def _reply_split_text(update: Update, text: str) -> None:
+    for chunk in split_text(text):
+        await update.effective_message.reply_text(chunk)
+
+
 async def command_statement(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -614,7 +636,7 @@ async def handle_document(
         return
     _set_draft_context(context, draft_id, budget_id)
     _set_state(context, STATE_WAITING_STATEMENT_CONFIRM)
-    await update.effective_message.reply_text(_build_draft_message(payload))
+    await _reply_split_text(update, _build_draft_message(payload))
 
 
 async def _apply_statement_draft(
@@ -719,7 +741,7 @@ async def handle_feedback(
         return
     _set_draft_context(context, draft_id, draft_context.budget_id)
     _set_state(context, STATE_WAITING_STATEMENT_CONFIRM)
-    await update.effective_message.reply_text(_build_draft_message(payload))
+    await _reply_split_text(update, _build_draft_message(payload))
 
 
 def register_handlers(app: Application) -> None:
