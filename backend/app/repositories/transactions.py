@@ -217,8 +217,6 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     serialized_payload = _serialize_payload(payload)
-    rollback_event_ids: list[str] | None = None
-
     if kind == "goal_transfer":
         client = get_supabase_client()
         try:
@@ -261,29 +259,56 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         return transaction
 
     if tx_type == "transfer":
+        client = get_supabase_client()
+        try:
+            response = (
+                client.table("transactions")
+                .insert({**serialized_payload, "user_id": user_id})
+                .execute()
+            )
+        except APIError as exc:
+            detail = getattr(exc, "message", None) or str(exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=detail,
+            ) from exc
+        data = response.data or []
+        if not data:
+            raise RuntimeError("Failed to create transaction in Supabase")
+        transaction = data[0]
         target_date = _parse_payload_date(payload.get("date"))
         amount = int(payload.get("amount", 0))
-        from_event = create_balance_event(
-            user_id,
-            budget_id,
-            target_date,
-            account_id,
-            -amount,
-            TRANSFER_REASON,
-        )
-        to_event = create_balance_event(
-            user_id,
-            budget_id,
-            target_date,
-            to_account_id,
-            amount,
-            TRANSFER_REASON,
-        )
-        rollback_event_ids = [
-            event_id
-            for event_id in (from_event.get("id"), to_event.get("id"))
-            if event_id
-        ]
+        try:
+            create_balance_event(
+                user_id,
+                budget_id,
+                target_date,
+                account_id,
+                -amount,
+                TRANSFER_REASON,
+                transaction_id=transaction.get("id"),
+            )
+            create_balance_event(
+                user_id,
+                budget_id,
+                target_date,
+                to_account_id,
+                amount,
+                TRANSFER_REASON,
+                transaction_id=transaction.get("id"),
+            )
+        except HTTPException:
+            try:
+                client.table("account_balance_events").delete().eq(
+                    "transaction_id", transaction.get("id")
+                ).execute()
+                client.table("transactions").delete().eq(
+                    "id", transaction.get("id")
+                ).execute()
+            except Exception:
+                pass
+            raise
+        return transaction
 
     client = get_supabase_client()
     try:
@@ -293,13 +318,6 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             .execute()
         )
     except APIError as exc:
-        if rollback_event_ids is not None:
-            try:
-                client.table("account_balance_events").delete().in_(
-                    "id", rollback_event_ids
-                ).execute()
-            except Exception:
-                pass
         detail = getattr(exc, "message", None) or str(exc)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
