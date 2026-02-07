@@ -415,7 +415,30 @@ def _format_http_error(exc: httpx.HTTPError) -> str:
     return str(exc)
 
 
-def _build_draft_message(payload: dict[str, Any]) -> str:
+def _build_operations_marker(start: int, end: int, total: int) -> str:
+    return f"Операции {start}–{end} из {total}"
+
+
+def _compose_message(
+    marker: str,
+    header: str,
+    operation_blocks: list[str],
+    tail: str,
+    include_done: bool,
+) -> str:
+    sections = [marker]
+    if header:
+        sections.append(header)
+    if operation_blocks:
+        sections.append("\n\n".join(operation_blocks))
+    if tail:
+        sections.append(tail)
+    if include_done:
+        sections.append("✔ Все операции показаны")
+    return "\n\n".join(sections)
+
+
+def _build_draft_messages(payload: dict[str, Any]) -> list[str]:
     transactions = payload.get("operations") or []
     warnings = list(payload.get("warnings") or [])
     missing_accounts = payload.get("missing_accounts") or []
@@ -460,7 +483,7 @@ def _build_draft_message(payload: dict[str, Any]) -> str:
     ]
     if not account_lines:
         account_lines = ["— (нет)"]
-    lines = [
+    header_lines = [
         "🤖 Я подготовил черновик выписки\n",
         "1️⃣ Количество операций (всего / по типам)",
         f"— Всего: {len(transactions)}",
@@ -476,57 +499,49 @@ def _build_draft_message(payload: dict[str, Any]) -> str:
         "3️⃣ Счета и их изменение",
         *account_lines,
     ]
-    total_operations = len(transactions)
-    max_operations = 20
-    preview_count = 10
-    lines.append("\n4️⃣ Операции (черновик)")
-    listed_transactions = transactions
-    truncated = False
-    if total_operations > max_operations:
-        listed_transactions = transactions[:preview_count]
-        truncated = True
-        lines.append(
-            f"Показаны первые {preview_count} из {total_operations} операций."
-        )
+    header_lines.append("\n4️⃣ Операции (черновик)")
     missing_account_ops: set[int] = set()
     for idx, tx in enumerate(transactions, start=1):
         account_name = _format_operation_account(tx.get("account"))
         if account_name == "Нужно уточнить":
             missing_account_ops.add(idx)
-    for idx, tx in enumerate(listed_transactions, start=1):
+    operation_blocks: list[str] = []
+    for idx, tx in enumerate(transactions, start=1):
         tx_type = tx.get("type") or "unknown"
         date = tx.get("date") or "—"
         account_name = _format_operation_account(tx.get("account"))
         counterparty = _format_operation_account(tx.get("counterparty"))
         category = (tx.get("category") or "").strip()
-        lines.append(f"\n{idx}) {date}")
-        lines.append(f"   {_format_operation_amount(tx)}")
-        lines.append(f"   Тип: {tx_type}")
-        lines.append(f"   Счет: {account_name}")
+        block_lines = [
+            f"{idx}) {date}",
+            f"   {_format_operation_amount(tx)}",
+            f"   Тип: {tx_type}",
+            f"   Счет: {account_name}",
+        ]
         if counterparty != "Нужно уточнить":
-            lines.append(f"   Контрагент: {counterparty}")
+            block_lines.append(f"   Контрагент: {counterparty}")
         if category:
-            lines.append(f"   Категория: {category}")
-        lines.append(f"   Описание: {_format_operation_description(tx)}")
-    if not listed_transactions:
-        lines.append("— (нет операций)")
-    if truncated:
-        lines.append("\n[Показать все операции]")
+            block_lines.append(f"   Категория: {category}")
+        block_lines.append(f"   Описание: {_format_operation_description(tx)}")
+        operation_blocks.append("\n".join(block_lines))
+    if not operation_blocks:
+        operation_blocks.append("— (нет операций)")
     if missing_account_ops:
         ops_list = ", ".join(str(op) for op in sorted(missing_account_ops))
         warnings.append(
             f"Нужен счет для операций: {ops_list}. Уточните счет или подтвердите создание."
         )
+    tail_lines: list[str] = []
     if missing_accounts or missing_categories:
-        lines.append("\n5️⃣ Что будет создано")
+        tail_lines.append("5️⃣ Что будет создано")
         if missing_accounts:
-            lines.append("— Счета:")
+            tail_lines.append("— Счета:")
             for item in missing_accounts:
                 name = item.get("name") or "Без названия"
                 kind = item.get("kind") or "bank"
-                lines.append(f"— {name} (тип: {kind})")
+                tail_lines.append(f"— {name} (тип: {kind})")
         if missing_categories:
-            lines.append("— Категории:")
+            tail_lines.append("— Категории:")
             category_operation_map: dict[str, list[int]] = {}
             for idx, tx in enumerate(transactions, start=1):
                 category_name = (tx.get("category") or "").strip()
@@ -539,23 +554,88 @@ def _build_draft_message(payload: dict[str, Any]) -> str:
                 operations = category_operation_map.get(name.lower(), [])
                 if operations:
                     ops_list = ", ".join(str(op) for op in operations)
-                    lines.append(f"— {name} (операции: {ops_list})")
+                    tail_lines.append(f"— {name} (операции: {ops_list})")
                 else:
-                    lines.append(f"— {name}")
+                    tail_lines.append(f"— {name}")
     if counterparties:
-        lines.append("\n6️⃣ Контрагенты")
+        tail_lines.append("\n6️⃣ Контрагенты")
         for name in counterparties:
-            lines.append(f"— {name}")
+            tail_lines.append(f"— {name}")
     if warnings:
-        lines.append("\n7️⃣ Warnings")
-        lines.append(_format_warnings(warnings))
-    lines.append("\n8️⃣ Вопрос подтверждения")
-    lines.append("❓ Применить изменения? Напишите: Да / Отмена")
-    return "\n".join(lines)
+        tail_lines.append("\n7️⃣ Warnings")
+        tail_lines.append(_format_warnings(warnings))
+    tail_lines.append("\n8️⃣ Вопрос подтверждения")
+    tail_lines.append("❓ Применить изменения? Напишите: Да / Отмена")
+    header_text = "\n".join(header_lines)
+    tail_text = "\n".join(tail_lines)
+    total_operations = len(operation_blocks)
+    if total_operations == 0:
+        marker = _build_operations_marker(0, 0, 0)
+        message = _compose_message(
+            marker, header_text, [], tail_text, include_done=True
+        )
+        return [message]
+    messages: list[str] = []
+    index = 0
+    while index < total_operations:
+        remaining = total_operations - index
+        header = header_text if index == 0 else ""
+        can_fit_remaining = False
+        marker = _build_operations_marker(
+            index + 1, index + remaining, total_operations
+        )
+        remaining_message = _compose_message(
+            marker,
+            header,
+            operation_blocks[index : index + remaining],
+            tail_text,
+            include_done=True,
+        )
+        if len(remaining_message) <= MAX_TELEGRAM_MESSAGE_LEN:
+            can_fit_remaining = True
+        if can_fit_remaining:
+            messages.append(remaining_message)
+            break
+        count = 0
+        while count < remaining:
+            end = index + count + 1
+            marker = _build_operations_marker(
+                index + 1, end, total_operations
+            )
+            message = _compose_message(
+                marker,
+                header,
+                operation_blocks[index:end],
+                "",
+                include_done=False,
+            )
+            if len(message) > MAX_TELEGRAM_MESSAGE_LEN:
+                break
+            count += 1
+        if count == 0:
+            count = 1
+        end = index + count
+        marker = _build_operations_marker(index + 1, end, total_operations)
+        message = _compose_message(
+            marker,
+            header,
+            operation_blocks[index:end],
+            "",
+            include_done=False,
+        )
+        messages.append(message)
+        index = end
+    return messages
 
 
-async def _reply_split_text(update: Update, text: str) -> None:
-    for chunk in split_text(text):
+async def _reply_split_text(
+    update: Update, text_or_messages: str | list[str]
+) -> None:
+    if isinstance(text_or_messages, list):
+        messages = text_or_messages
+    else:
+        messages = split_text(text_or_messages)
+    for chunk in messages:
         await update.effective_message.reply_text(chunk)
 
 
@@ -636,7 +716,7 @@ async def handle_document(
         return
     _set_draft_context(context, draft_id, budget_id)
     _set_state(context, STATE_WAITING_STATEMENT_CONFIRM)
-    await _reply_split_text(update, _build_draft_message(payload))
+    await _reply_split_text(update, _build_draft_messages(payload))
 
 
 async def _apply_statement_draft(
@@ -741,7 +821,7 @@ async def handle_feedback(
         return
     _set_draft_context(context, draft_id, draft_context.budget_id)
     _set_state(context, STATE_WAITING_STATEMENT_CONFIRM)
-    await _reply_split_text(update, _build_draft_message(payload))
+    await _reply_split_text(update, _build_draft_messages(payload))
 
 
 def register_handlers(app: Application) -> None:
