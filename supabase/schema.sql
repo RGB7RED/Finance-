@@ -172,7 +172,7 @@ create table if not exists public.statement_drafts (
     id uuid primary key default gen_random_uuid(),
     budget_id uuid not null references public.budgets(id) on delete cascade,
     user_id uuid not null references public.users(id) on delete cascade,
-    status text not null check (status in ('draft', 'revised', 'applied')),
+    status text not null check (status in ('draft', 'revised', 'applied', 'failed')),
     source_filename text,
     source_mime text,
     source_text text,

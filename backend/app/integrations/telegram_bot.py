@@ -415,6 +415,51 @@ def _format_http_error(exc: httpx.HTTPError) -> str:
     return str(exc)
 
 
+def _format_statement_apply_error(payload: dict[str, Any]) -> str | None:
+    if payload.get("error") != "statement_apply_failed":
+        return None
+    reason = payload.get("reason")
+    details = payload.get("details") or {}
+    if reason == "invalid_operation_payload":
+        index = details.get("operation_index")
+        field = details.get("field")
+        if field == "amount":
+            return (
+                "❌ Не удалось применить выписку\n"
+                f"Причина: некорректная сумма в операции №{index}\n"
+                "Импорт остановлен, данные не изменены"
+            )
+        if field == "date":
+            return (
+                "❌ Не удалось применить выписку\n"
+                f"Причина: некорректная дата в операции №{index}\n"
+                "Импорт остановлен, данные не изменены"
+            )
+        return (
+            "❌ Не удалось применить выписку\n"
+            f"Причина: некорректные данные в операции №{index}\n"
+            "Импорт остановлен, данные не изменены"
+        )
+    if reason == "empty_operations":
+        return (
+            "❌ Не удалось применить выписку\n"
+            "Причина: в черновике нет операций\n"
+            "Импорт остановлен, данные не изменены"
+        )
+    if reason == "already_applied":
+        return (
+            "⚠️ Выписка уже применена ранее.\n"
+            "Повторное применение запрещено."
+        )
+    if reason == "draft_failed":
+        return (
+            "❌ Не удалось применить выписку\n"
+            "Причина: черновик находится в статусе ошибки\n"
+            "Импорт остановлен, данные не изменены"
+        )
+    return None
+
+
 def _build_operations_marker(start: int, end: int, total: int) -> str:
     return f"Операции {start}–{end} из {total}"
 
@@ -735,6 +780,16 @@ async def _apply_statement_draft(
         )
     except httpx.HTTPError as exc:
         logger.exception("Statement apply failed")
+        if isinstance(exc, httpx.HTTPStatusError):
+            try:
+                payload = exc.response.json()
+            except ValueError:
+                payload = None
+            if isinstance(payload, dict):
+                message = _format_statement_apply_error(payload)
+                if message:
+                    await update.effective_message.reply_text(message)
+                    return
         await update.effective_message.reply_text(
             f"Ошибка применения выписки: {_format_http_error(exc)}"
         )
