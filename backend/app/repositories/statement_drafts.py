@@ -35,6 +35,7 @@ def create_statement_draft(
     source_text: str,
     model: str,
     draft_payload: dict[str, Any],
+    status: str = "draft",
 ) -> dict[str, Any]:
     _ensure_budget_access(user_id, budget_id)
     client = get_supabase_client()
@@ -44,7 +45,7 @@ def create_statement_draft(
             {
                 "budget_id": budget_id,
                 "user_id": user_id,
-                "status": "draft",
+                "status": status,
                 "source_filename": source_filename,
                 "source_mime": source_mime,
                 "source_text": source_text,
