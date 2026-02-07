@@ -3,6 +3,7 @@ uvicorn[standard]
 pydantic-settings
 python-dotenv
 pyjwt
+psycopg[binary]
 supabase
 httpx
 python-multipart

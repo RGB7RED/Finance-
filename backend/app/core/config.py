@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     JWT_SECRET: str
     TELEGRAM_BOT_TOKEN: str | None = None
     BACKEND_API_BASE_URL: str = "http://localhost:8000"
+    DATABASE_URL: str | None = None
+    SUPABASE_DB_URL: str | None = None
     SUPABASE_URL: str | None = None
     SUPABASE_ANON_KEY: str | None = None
     SUPABASE_SERVICE_ROLE_KEY: str | None = None

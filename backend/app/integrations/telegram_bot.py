@@ -420,25 +420,37 @@ def _format_statement_apply_error(payload: dict[str, Any]) -> str | None:
         return None
     reason = payload.get("reason")
     details = payload.get("details") or {}
-    if reason == "invalid_operation_payload":
+    if reason == "invalid_operation":
         index = details.get("operation_index")
         field = details.get("field")
         if field == "amount":
             return (
-                "❌ Не удалось применить выписку\n"
-                f"Причина: некорректная сумма в операции №{index}\n"
-                "Импорт остановлен, данные не изменены"
+                "❌ Выписка не применена\n"
+                f"Ошибка в операции №{index}: некорректная сумма\n"
+                "Данные не изменены"
             )
         if field == "date":
             return (
-                "❌ Не удалось применить выписку\n"
-                f"Причина: некорректная дата в операции №{index}\n"
-                "Импорт остановлен, данные не изменены"
+                "❌ Выписка не применена\n"
+                f"Ошибка в операции №{index}: некорректная дата\n"
+                "Данные не изменены"
+            )
+        if field in {"account_id", "account_name"}:
+            return (
+                "❌ Выписка не применена\n"
+                f"Ошибка в операции №{index}: не найден счет\n"
+                "Данные не изменены"
+            )
+        if field in {"to_account_id", "to_account_name"}:
+            return (
+                "❌ Выписка не применена\n"
+                f"Ошибка в операции №{index}: не найден счет назначения\n"
+                "Данные не изменены"
             )
         return (
-            "❌ Не удалось применить выписку\n"
-            f"Причина: некорректные данные в операции №{index}\n"
-            "Импорт остановлен, данные не изменены"
+            "❌ Выписка не применена\n"
+            f"Ошибка в операции №{index}: некорректные данные\n"
+            "Данные не изменены"
         )
     if reason == "empty_operations":
         return (
@@ -456,6 +468,18 @@ def _format_statement_apply_error(payload: dict[str, Any]) -> str | None:
             "❌ Не удалось применить выписку\n"
             "Причина: черновик находится в статусе ошибки\n"
             "Импорт остановлен, данные не изменены"
+        )
+    return None
+
+
+def _format_statement_parse_error(payload: dict[str, Any]) -> str | None:
+    if payload.get("error") != "statement_parse_failed":
+        return None
+    if payload.get("reason") == "data_loss":
+        return (
+            "❌ Ошибка импорта\n"
+            "Некоторые операции из выписки были потеряны.\n"
+            "Импорт остановлен."
         )
     return None
 
@@ -731,6 +755,16 @@ async def handle_document(
             )
         except httpx.HTTPError as exc:
             logger.exception("Statement draft failed")
+            if isinstance(exc, httpx.HTTPStatusError):
+                try:
+                    payload = exc.response.json()
+                except ValueError:
+                    payload = None
+                if isinstance(payload, dict):
+                    message = _format_statement_parse_error(payload)
+                    if message:
+                        await update.effective_message.reply_text(message)
+                        return
             await update.effective_message.reply_text(
                 f"Ошибка загрузки выписки: {_format_http_error(exc)}"
             )
@@ -747,6 +781,16 @@ async def handle_document(
             )
         except httpx.HTTPError as exc:
             logger.exception("Statement draft failed")
+            if isinstance(exc, httpx.HTTPStatusError):
+                try:
+                    payload = exc.response.json()
+                except ValueError:
+                    payload = None
+                if isinstance(payload, dict):
+                    message = _format_statement_parse_error(payload)
+                    if message:
+                        await update.effective_message.reply_text(message)
+                        return
             await update.effective_message.reply_text(
                 f"Ошибка загрузки выписки: {_format_http_error(exc)}"
             )

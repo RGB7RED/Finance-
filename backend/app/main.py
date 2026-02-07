@@ -17,6 +17,10 @@ from app.core.config import (
 )
 from app.integrations.supabase_client import get_supabase_client
 from app.integrations.telegram_bot import build_application, register_handlers
+from app.integrations.telegram_polling_lock import (
+    acquire_telegram_polling_lock,
+    release_telegram_polling_lock,
+)
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
@@ -97,24 +101,32 @@ async def start_telegram_bot() -> None:
     if not token:
         logger.info("telegram_bot_startup=skipped reason=token_missing")
         return
+    lock_connection = acquire_telegram_polling_lock()
+    if not lock_connection:
+        logger.info("telegram_bot_startup=skipped reason=lock_not_acquired")
+        return
     telegram_app = build_application(token)
     register_handlers(telegram_app)
     await telegram_app.initialize()
     await telegram_app.start()
     await telegram_app.updater.start_polling()
     app.state.telegram_app = telegram_app
+    app.state.telegram_lock_connection = lock_connection
     logger.info("telegram_bot_startup=ok")
 
 
 @app.on_event("shutdown")
 async def stop_telegram_bot() -> None:
     telegram_app = getattr(app.state, "telegram_app", None)
-    if not telegram_app:
-        return
-    await telegram_app.updater.stop()
-    await telegram_app.stop()
-    await telegram_app.shutdown()
-    logger.info("telegram_bot_shutdown=ok")
+    if telegram_app:
+        await telegram_app.updater.stop()
+        await telegram_app.stop()
+        await telegram_app.shutdown()
+    release_telegram_polling_lock(
+        getattr(app.state, "telegram_lock_connection", None)
+    )
+    if telegram_app:
+        logger.info("telegram_bot_shutdown=ok")
 
 
 @app.options("/{path:path}")

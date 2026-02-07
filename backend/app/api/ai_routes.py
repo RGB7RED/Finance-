@@ -36,6 +36,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai")
 
 
+class StatementApplyError(Exception):
+    def __init__(self, reason: str, details: dict[str, Any]) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.details = details
+
+
 def _ensure_supported_statement(file: UploadFile) -> None:
     content_type = (file.content_type or "").lower()
     filename = (file.filename or "").lower()
@@ -241,6 +248,19 @@ def _statement_apply_error_response(
     )
 
 
+def _statement_parse_error_response(
+    reason: str, details: dict[str, Any], status_code: int = 422
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": "statement_parse_failed",
+            "reason": reason,
+            **details,
+        },
+    )
+
+
 def _validate_apply_operations(
     transactions: list[dict[str, Any]],
     account_map: dict[str, str],
@@ -268,7 +288,7 @@ def _validate_apply_operations(
     for index, item in enumerate(transactions, start=1):
         if not isinstance(item, dict):
             return {
-                "reason": "invalid_operation_payload",
+                "reason": "invalid_operation",
                 "details": {
                     "operation_index": index,
                     "field": "operation",
@@ -279,7 +299,7 @@ def _validate_apply_operations(
         date_value = item.get("date")
         if not date_value:
             return {
-                "reason": "invalid_operation_payload",
+                "reason": "invalid_operation",
                 "details": {
                     "operation_index": index,
                     "field": "date",
@@ -294,7 +314,7 @@ def _validate_apply_operations(
                 raise ValueError("Date must be string")
         except ValueError:
             return {
-                "reason": "invalid_operation_payload",
+                "reason": "invalid_operation",
                 "details": {
                     "operation_index": index,
                     "field": "date",
@@ -305,7 +325,7 @@ def _validate_apply_operations(
         amount_value = item.get("amount")
         if isinstance(amount_value, str) or isinstance(amount_value, bool):
             return {
-                "reason": "invalid_operation_payload",
+                "reason": "invalid_operation",
                 "details": {
                     "operation_index": index,
                     "field": "amount",
@@ -315,7 +335,7 @@ def _validate_apply_operations(
             }
         if not isinstance(amount_value, (int, float)):
             return {
-                "reason": "invalid_operation_payload",
+                "reason": "invalid_operation",
                 "details": {
                     "operation_index": index,
                     "field": "amount",
@@ -326,7 +346,7 @@ def _validate_apply_operations(
         op_type = item.get("type")
         if not op_type:
             return {
-                "reason": "invalid_operation_payload",
+                "reason": "invalid_operation",
                 "details": {
                     "operation_index": index,
                     "field": "type",
@@ -336,7 +356,7 @@ def _validate_apply_operations(
             }
         if op_type not in {"income", "expense", "transfer", "fee"}:
             return {
-                "reason": "invalid_operation_payload",
+                "reason": "invalid_operation",
                 "details": {
                     "operation_index": index,
                     "field": "type",
@@ -349,7 +369,7 @@ def _validate_apply_operations(
         if account_id:
             if account_id not in account_ids:
                 return {
-                    "reason": "invalid_operation_payload",
+                    "reason": "invalid_operation",
                     "details": {
                         "operation_index": index,
                         "field": "account_id",
@@ -363,7 +383,7 @@ def _validate_apply_operations(
                 and account_name not in missing_account_names
             ):
                 return {
-                    "reason": "invalid_operation_payload",
+                    "reason": "invalid_operation",
                     "details": {
                         "operation_index": index,
                         "field": "account_name",
@@ -373,7 +393,7 @@ def _validate_apply_operations(
                 }
         else:
             return {
-                "reason": "invalid_operation_payload",
+                "reason": "invalid_operation",
                 "details": {
                     "operation_index": index,
                     "field": "account_ref",
@@ -389,7 +409,7 @@ def _validate_apply_operations(
             if to_account_id:
                 if to_account_id not in account_ids:
                     return {
-                        "reason": "invalid_operation_payload",
+                        "reason": "invalid_operation",
                         "details": {
                             "operation_index": index,
                             "field": "to_account_id",
@@ -403,7 +423,7 @@ def _validate_apply_operations(
                     and to_account_name not in missing_account_names
                 ):
                     return {
-                        "reason": "invalid_operation_payload",
+                        "reason": "invalid_operation",
                         "details": {
                             "operation_index": index,
                             "field": "to_account_name",
@@ -413,7 +433,7 @@ def _validate_apply_operations(
                     }
             else:
                 return {
-                    "reason": "invalid_operation_payload",
+                    "reason": "invalid_operation",
                     "details": {
                         "operation_index": index,
                         "field": "to_account_ref",
@@ -427,7 +447,7 @@ def _validate_apply_operations(
             if category_id:
                 if category_id not in category_ids:
                     return {
-                        "reason": "invalid_operation_payload",
+                        "reason": "invalid_operation",
                         "details": {
                             "operation_index": index,
                             "field": "category_id",
@@ -441,7 +461,7 @@ def _validate_apply_operations(
                     and category_name not in missing_category_names
                 ):
                     return {
-                        "reason": "invalid_operation_payload",
+                        "reason": "invalid_operation",
                         "details": {
                             "operation_index": index,
                             "field": "category_name",
@@ -684,6 +704,7 @@ async def post_statement_draft(
         source_value = source
         statement_text_value = statement_text
         rows_parsed = None
+        csv_rows_count = None
     else:
         if not file:
             raise HTTPException(
@@ -701,6 +722,7 @@ async def post_statement_draft(
         is_pdf = "pdf" in content_type or filename.endswith(".pdf")
         if is_csv:
             csv_rows = _parse_csv_rows(raw)
+            csv_rows_count = len(csv_rows)
             normalized_rows = _normalize_csv_rows(csv_rows)
             rows_parsed = len(normalized_rows)
             statement_payload = {
@@ -721,6 +743,7 @@ async def post_statement_draft(
             statement_text_value = json.dumps(
                 statement_payload, ensure_ascii=False
             )
+            csv_rows_count = None
         else:
             statement_text_value = _decode_statement(file, raw)
             text_rows = _pdf_text_to_rows(statement_text_value)
@@ -732,6 +755,7 @@ async def post_statement_draft(
             statement_text_value = json.dumps(
                 statement_payload, ensure_ascii=False
             )
+            csv_rows_count = None
         logger.info(
             "Statement import: rows_parsed=%d, file_name=%s",
             rows_parsed,
@@ -798,11 +822,19 @@ async def post_statement_draft(
         "Statement draft: operations_returned=%d",
         operations_returned,
     )
-    if rows_parsed is not None and rows_parsed > operations_returned:
+    if csv_rows_count is not None and csv_rows_count != operations_returned:
         logger.error(
             "Data loss detected: CSV rows=%d, operations=%d",
-            rows_parsed,
+            csv_rows_count,
             operations_returned,
+        )
+        return _statement_parse_error_response(
+            "data_loss",
+            {
+                "csv_rows": csv_rows_count,
+                "parsed_operations": operations_returned,
+            },
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
     accounts = list_accounts(current_user["sub"], budget_id, as_of)
     categories = list_categories(current_user["sub"], budget_id)
@@ -928,7 +960,7 @@ def revise_statement_draft(
         {
             "draft_payload": revised_payload,
             "feedback": feedback,
-            "status": "revised",
+            "status": "draft",
             "updated_at": dt.datetime.utcnow().isoformat(),
         },
     )
@@ -954,6 +986,7 @@ def apply_statement_draft(
         draft_id,
         operations_count,
     )
+    draft_status = draft.get("status")
     if draft.get("status") == "applied":
         return _statement_apply_error_response(
             "already_applied",
@@ -966,6 +999,12 @@ def apply_statement_draft(
             stored_error.get("reason") or "draft_failed",
             stored_error.get("details") or {"draft_id": draft_id},
             status_code=status.HTTP_409_CONFLICT,
+        )
+    if draft_status != "draft":
+        return _statement_apply_error_response(
+            "invalid_draft_status",
+            {"draft_id": draft_id, "status": draft_status},
+            status_code=status.HTTP_400_BAD_REQUEST,
         )
     transactions = payload.get("normalized_transactions") or []
     errors: list[str] = []
@@ -1084,8 +1123,14 @@ def apply_statement_draft(
                 account_name = (item.get("account_name") or "").strip().lower()
                 item["account_id"] = account_map.get(account_name)
             if not item.get("account_id"):
-                raise ValueError(
-                    f"Не найден счет для транзакции: {item.get('account_name')}"
+                raise StatementApplyError(
+                    "invalid_operation",
+                    {
+                        "operation_index": index,
+                        "field": "account_id",
+                        "value": item.get("account_name"),
+                        "expected": "existing account",
+                    },
                 )
             if item.get("type") == "transfer" and not item.get("to_account_id"):
                 to_account_name = (
@@ -1093,9 +1138,14 @@ def apply_statement_draft(
                 ).strip().lower()
                 item["to_account_id"] = account_map.get(to_account_name)
             if item.get("type") == "transfer" and not item.get("to_account_id"):
-                raise ValueError(
-                    "Не найден счет назначения для перевода: "
-                    f"{item.get('to_account_name')}"
+                raise StatementApplyError(
+                    "invalid_operation",
+                    {
+                        "operation_index": index,
+                        "field": "to_account_id",
+                        "value": item.get("to_account_name"),
+                        "expected": "existing account",
+                    },
                 )
             if item.get("type") == "expense" and not item.get("category_id"):
                 category_name = (item.get("category_name") or "").strip().lower()
@@ -1103,10 +1153,30 @@ def apply_statement_draft(
                     item["category_id"] = category_map.get(category_name)
                 else:
                     item["category_id"] = category_map.get("прочее")
+            if item.get("type") == "expense" and not item.get("category_id"):
+                raise StatementApplyError(
+                    "invalid_operation",
+                    {
+                        "operation_index": index,
+                        "field": "category_id",
+                        "value": item.get("category_name"),
+                        "expected": "existing category",
+                    },
+                )
             if item.get("type") == "fee" and not item.get("category_id"):
                 category_name = (item.get("category_name") or "").strip().lower()
                 if category_name:
                     item["category_id"] = category_map.get(category_name)
+            if item.get("type") == "fee" and not item.get("category_id"):
+                raise StatementApplyError(
+                    "invalid_operation",
+                    {
+                        "operation_index": index,
+                        "field": "category_id",
+                        "value": item.get("category_name"),
+                        "expected": "existing category",
+                    },
+                )
             tx_payload = {
                 "budget_id": draft["budget_id"],
                 "type": item.get("type"),
@@ -1179,7 +1249,7 @@ def apply_statement_draft(
         }
     except HTTPException:
         raise
-    except ValueError as exc:
+    except StatementApplyError as exc:
         logger.error("Statement apply failed: %s", exc)
         _rollback_statement_apply(
             client,
@@ -1193,8 +1263,8 @@ def apply_statement_draft(
             draft,
         )
         apply_error = {
-            "reason": "invalid_operation_payload",
-            "details": {"message": str(exc)},
+            "reason": exc.reason,
+            "details": exc.details,
         }
         update_statement_draft(
             current_user["sub"],
@@ -1206,8 +1276,8 @@ def apply_statement_draft(
             },
         )
         return _statement_apply_error_response(
-            "invalid_operation_payload",
-            {"message": str(exc)},
+            exc.reason,
+            exc.details,
             status_code=status.HTTP_400_BAD_REQUEST,
         )
     except Exception as exc:
