@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from app.auth.jwt import get_current_user
 from app.core.config import settings
 from app.integrations.llm_client import LLMError, generate_statement_draft
+from app.integrations.supabase_client import get_supabase_client
 from app.repositories.account_balance_events import (
     RECONCILE_ADJUST_REASON,
     create_balance_event,
@@ -208,6 +209,47 @@ def _account_name_map(accounts: list[dict[str, Any]]) -> dict[str, str]:
 
 def _category_name_map(categories: list[dict[str, Any]]) -> dict[str, str]:
     return {category["name"].lower(): category["id"] for category in categories}
+
+
+def _normalize_amount(raw_amount: Any) -> float:
+    if isinstance(raw_amount, str):
+        raw_amount = raw_amount.replace(",", ".").strip()
+    try:
+        amount = float(raw_amount)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid amount") from exc
+    return round(amount, 2)
+
+
+def _normalize_statement_transactions(
+    transactions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(transactions, start=1):
+        raw_amount = item.get("amount")
+        try:
+            amount = _normalize_amount(raw_amount)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "❌ Ошибка данных выписки.\n"
+                    f"Поле amount имеет некорректный тип в операции №{index}.\n"
+                    "Импорт остановлен."
+                ),
+            ) from exc
+        if not isinstance(amount, (int, float)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "❌ Ошибка данных выписки.\n"
+                    f"Поле amount имеет некорректный тип в операции №{index}.\n"
+                    "Импорт остановлен."
+                ),
+            )
+        item["amount"] = amount
+        normalized.append(item)
+    return normalized
 
 
 def _build_context(
@@ -663,148 +705,219 @@ def apply_statement_draft(
     draft = get_statement_draft(current_user["sub"], draft_id)
     payload = draft.get("draft_payload") or {}
     transactions = payload.get("normalized_transactions") or []
+    transactions = _normalize_statement_transactions(transactions)
+    payload["normalized_transactions"] = transactions
     errors: list[str] = []
     created: list[dict[str, Any]] = []
+    created_transaction_ids: list[str] = []
+    created_category_ids: list[str] = []
+    created_account_ids: list[str] = []
+    created_adjustment_event_ids: list[str] = []
+    previous_debts: dict[str, Any] | None = None
+    client = get_supabase_client()
     missing_accounts = payload.get("missing_accounts") or []
     missing_categories = payload.get("missing_categories") or []
     as_of = dt.date.today()
-    if missing_categories:
-        categories = list_categories(current_user["sub"], draft["budget_id"])
-        category_map = _category_name_map(categories)
-        from app.repositories.categories import create_category
-
-        for item in missing_categories:
-            name = (item.get("name") or "").strip()
-            if not name:
-                continue
-            if name.lower() in category_map:
-                continue
-            created_category = create_category(
-                current_user["sub"], draft["budget_id"], name
+    try:
+        if missing_categories:
+            categories = list_categories(
+                current_user["sub"], draft["budget_id"]
             )
-            category_map[name.lower()] = created_category["id"]
-    if missing_accounts:
+            category_map = _category_name_map(categories)
+            from app.repositories.categories import create_category
+
+            for item in missing_categories:
+                name = (item.get("name") or "").strip()
+                if not name:
+                    continue
+                if name.lower() in category_map:
+                    continue
+                created_category = create_category(
+                    current_user["sub"], draft["budget_id"], name
+                )
+                created_category_ids.append(created_category["id"])
+                category_map[name.lower()] = created_category["id"]
+        if missing_accounts:
+            accounts = list_accounts(
+                current_user["sub"], draft["budget_id"], as_of
+            )
+            account_map = _account_name_map(accounts)
+            from app.repositories.accounts import create_account
+
+            for item in missing_accounts:
+                name = (item.get("name") or "").strip()
+                if not name:
+                    continue
+                if name.lower() in account_map:
+                    continue
+                kind = (item.get("kind") or "bank").lower()
+                if kind == "card":
+                    kind = "bank"
+                if kind not in ("cash", "bank"):
+                    kind = "bank"
+                created_account = create_account(
+                    current_user["sub"],
+                    draft["budget_id"],
+                    name,
+                    kind,
+                    as_of,
+                    0,
+                )
+                created_account_ids.append(created_account["id"])
+                account_map[name.lower()] = created_account["id"]
         accounts = list_accounts(
             current_user["sub"], draft["budget_id"], as_of
         )
+        categories = list_categories(current_user["sub"], draft["budget_id"])
         account_map = _account_name_map(accounts)
-        from app.repositories.accounts import create_account
+        category_map = _category_name_map(categories)
+        if any(
+            item.get("type") == "expense"
+            and not (item.get("category_name") or "").strip()
+            for item in transactions
+        ):
+            from app.repositories.categories import create_category
 
-        for item in missing_accounts:
-            name = (item.get("name") or "").strip()
-            if not name:
+            if "прочее" not in category_map:
+                created_category = create_category(
+                    current_user["sub"], draft["budget_id"], "Прочее"
+                )
+                created_category_ids.append(created_category["id"])
+                category_map["прочее"] = created_category["id"]
+        for index, item in enumerate(transactions, start=1):
+            if not item.get("account_id"):
+                account_name = (item.get("account_name") or "").strip().lower()
+                item["account_id"] = account_map.get(account_name)
+            if not item.get("account_id"):
+                errors.append(
+                    f"Не найден счет для транзакции: {item.get('account_name')}"
+                )
                 continue
-            if name.lower() in account_map:
+            if item.get("type") == "transfer" and not item.get("to_account_id"):
+                to_account_name = (
+                    item.get("to_account_name") or ""
+                ).strip().lower()
+                item["to_account_id"] = account_map.get(to_account_name)
+            if item.get("type") == "transfer" and not item.get("to_account_id"):
+                errors.append(
+                    "Не найден счет назначения для перевода: "
+                    f"{item.get('to_account_name')}"
+                )
                 continue
-            kind = (item.get("kind") or "bank").lower()
-            if kind == "card":
-                kind = "bank"
-            if kind not in ("cash", "bank"):
-                kind = "bank"
-            created_account = create_account(
+            if item.get("type") == "expense" and not item.get("category_id"):
+                category_name = (item.get("category_name") or "").strip().lower()
+                if category_name:
+                    item["category_id"] = category_map.get(category_name)
+                else:
+                    item["category_id"] = category_map.get("прочее")
+            if item.get("type") == "fee" and not item.get("category_id"):
+                category_name = (item.get("category_name") or "").strip().lower()
+                if category_name:
+                    item["category_id"] = category_map.get(category_name)
+            tx_payload = {
+                "budget_id": draft["budget_id"],
+                "type": item.get("type"),
+                "kind": item.get("kind") or "normal",
+                "amount": item.get("amount"),
+                "date": item.get("date"),
+                "account_id": item.get("account_id"),
+                "to_account_id": item.get("to_account_id"),
+                "category_id": item.get("category_id"),
+                "tag": item.get("tag") or "one_time",
+                "note": item.get("note"),
+            }
+            debt = item.get("debt")
+            if debt:
+                tx_payload["kind"] = "debt"
+                tx_payload["note"] = json.dumps(debt, ensure_ascii=False)
+            operation_id = item.get("id") or item.get("operation_id") or index
+            logger.info(
+                "Applying operation #%s: amount=%s (%s)",
+                operation_id,
+                tx_payload.get("amount"),
+                type(tx_payload.get("amount")).__name__,
+            )
+            transaction = create_transaction(current_user["sub"], tx_payload)
+            created.append(transaction)
+            if transaction.get("id"):
+                created_transaction_ids.append(transaction["id"])
+        for adjust in payload.get("balance_adjustments") or []:
+            account_name = (adjust.get("account_name") or "").strip().lower()
+            account_map = _account_name_map(
+                list_accounts(current_user["sub"], draft["budget_id"])
+            )
+            account_id = account_map.get(account_name)
+            if not account_id:
+                errors.append(
+                    f"Не найден счет для корректировки: {account_name}"
+                )
+                continue
+            event = create_balance_event(
                 current_user["sub"],
                 draft["budget_id"],
-                name,
-                kind,
-                as_of,
-                0,
+                dt.date.fromisoformat(adjust.get("date")),
+                account_id,
+                int(adjust.get("delta", 0)),
+                RECONCILE_ADJUST_REASON,
             )
-            account_map[name.lower()] = created_account["id"]
-    accounts = list_accounts(current_user["sub"], draft["budget_id"], as_of)
-    categories = list_categories(current_user["sub"], draft["budget_id"])
-    account_map = _account_name_map(accounts)
-    category_map = _category_name_map(categories)
-    if any(
-        item.get("type") == "expense"
-        and not (item.get("category_name") or "").strip()
-        for item in transactions
-    ):
-        from app.repositories.categories import create_category
-
-        if "прочее" not in category_map:
-            created_category = create_category(
-                current_user["sub"], draft["budget_id"], "Прочее"
+            if event.get("id"):
+                created_adjustment_event_ids.append(event["id"])
+        debts = payload.get("debts")
+        if debts:
+            target_date = dt.date.fromisoformat(debts.get("date"))
+            previous_debts = get_debts_as_of(
+                current_user["sub"], draft["budget_id"], target_date
             )
-            category_map["прочее"] = created_category["id"]
-    for item in transactions:
-        if not item.get("account_id"):
-            account_name = (item.get("account_name") or "").strip().lower()
-            item["account_id"] = account_map.get(account_name)
-        if not item.get("account_id"):
-            errors.append(
-                f"Не найден счет для транзакции: {item.get('account_name')}"
+            upsert_debts(
+                current_user["sub"],
+                draft["budget_id"],
+                target_date,
+                credit_cards=int(debts.get("credit_cards_total", 0)),
+                people_debts=int(debts.get("people_debts_total", 0)),
             )
-            continue
-        if item.get("type") == "transfer" and not item.get("to_account_id"):
-            to_account_name = (item.get("to_account_name") or "").strip().lower()
-            item["to_account_id"] = account_map.get(to_account_name)
-        if item.get("type") == "transfer" and not item.get("to_account_id"):
-            errors.append(
-                "Не найден счет назначения для перевода: "
-                f"{item.get('to_account_name')}"
-            )
-            continue
-        if item.get("type") == "expense" and not item.get("category_id"):
-            category_name = (item.get("category_name") or "").strip().lower()
-            if category_name:
-                item["category_id"] = category_map.get(category_name)
-            else:
-                item["category_id"] = category_map.get("прочее")
-        if item.get("type") == "fee" and not item.get("category_id"):
-            category_name = (item.get("category_name") or "").strip().lower()
-            if category_name:
-                item["category_id"] = category_map.get(category_name)
-        tx_payload = {
-            "budget_id": draft["budget_id"],
-            "type": item.get("type"),
-            "kind": item.get("kind") or "normal",
-            "amount": item.get("amount"),
-            "date": item.get("date"),
-            "account_id": item.get("account_id"),
-            "to_account_id": item.get("to_account_id"),
-            "category_id": item.get("category_id"),
-            "tag": item.get("tag") or "one_time",
-            "note": item.get("note"),
+        updated = update_statement_draft(
+            current_user["sub"],
+            draft_id,
+            {"status": "applied", "updated_at": dt.datetime.utcnow().isoformat()},
+        )
+        return {
+            "draft": updated,
+            "created_transactions": created,
+            "errors": errors,
         }
-        debt = item.get("debt")
-        if debt:
-            tx_payload["kind"] = "debt"
-            tx_payload["note"] = json.dumps(debt, ensure_ascii=False)
-        created.append(create_transaction(current_user["sub"], tx_payload))
-    for adjust in payload.get("balance_adjustments") or []:
-        account_name = (adjust.get("account_name") or "").strip().lower()
-        account_map = _account_name_map(
-            list_accounts(current_user["sub"], draft["budget_id"])
-        )
-        account_id = account_map.get(account_name)
-        if not account_id:
-            errors.append(f"Не найден счет для корректировки: {account_name}")
-            continue
-        create_balance_event(
-            current_user["sub"],
-            draft["budget_id"],
-            dt.date.fromisoformat(adjust.get("date")),
-            account_id,
-            int(adjust.get("delta", 0)),
-            RECONCILE_ADJUST_REASON,
-        )
-    debts = payload.get("debts")
-    if debts:
-        target_date = dt.date.fromisoformat(debts.get("date"))
-        upsert_debts(
-            current_user["sub"],
-            draft["budget_id"],
-            target_date,
-            credit_cards=int(debts.get("credit_cards_total", 0)),
-            people_debts=int(debts.get("people_debts_total", 0)),
-        )
-    updated = update_statement_draft(
-        current_user["sub"],
-        draft_id,
-        {"status": "applied", "updated_at": dt.datetime.utcnow().isoformat()},
-    )
-    return {
-        "draft": updated,
-        "created_transactions": created,
-        "errors": errors,
-    }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Statement apply failed: %s", exc)
+        if created_transaction_ids:
+            client.table("account_balance_events").delete().in_(
+                "transaction_id", created_transaction_ids
+            ).execute()
+            client.table("transactions").delete().in_(
+                "id", created_transaction_ids
+            ).execute()
+        if created_adjustment_event_ids:
+            client.table("account_balance_events").delete().in_(
+                "id", created_adjustment_event_ids
+            ).execute()
+        if created_account_ids:
+            client.table("accounts").delete().in_(
+                "id", created_account_ids
+            ).execute()
+        if created_category_ids:
+            client.table("categories").delete().in_(
+                "id", created_category_ids
+            ).execute()
+        if previous_debts and payload.get("debts"):
+            target_date = dt.date.fromisoformat(payload["debts"].get("date"))
+            upsert_debts(
+                current_user["sub"],
+                draft["budget_id"],
+                target_date,
+                credit_cards=int(previous_debts.get("debt_cards_total", 0)),
+                people_debts=int(previous_debts.get("debt_other_total", 0)),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to apply statement draft",
+        ) from exc
