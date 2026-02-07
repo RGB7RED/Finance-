@@ -348,6 +348,29 @@ def _format_signed_amount(value: float) -> str:
     return f"{sign}{_format_currency(abs(value))}"
 
 
+def _format_operation_amount(tx: dict[str, Any]) -> str:
+    amount = _extract_amount(tx.get("amount"))
+    tx_type = tx.get("type")
+    if tx_type in {"expense", "fee"} and amount > 0:
+        amount = -amount
+    return _format_signed_amount(amount)
+
+
+def _format_operation_account(value: Any) -> str:
+    account = (value or "").strip()
+    return account if account else "Нужно уточнить"
+
+
+def _format_operation_description(tx: dict[str, Any]) -> str:
+    note = (tx.get("note") or "").strip()
+    counterparty = (tx.get("counterparty") or "").strip()
+    if note:
+        return note
+    if counterparty:
+        return counterparty
+    return "—"
+
+
 def _extract_amount(value: Any) -> float:
     try:
         return float(value)
@@ -377,8 +400,7 @@ def _format_http_error(exc: httpx.HTTPError) -> str:
 
 def _build_draft_message(payload: dict[str, Any]) -> str:
     transactions = payload.get("transactions") or []
-    normalized = payload.get("normalized_transactions") or []
-    warnings = payload.get("warnings") or []
+    warnings = list(payload.get("warnings") or [])
     missing_accounts = payload.get("missing_accounts") or []
     missing_categories = payload.get("missing_categories") or []
     counterparties = payload.get("counterparties") or []
@@ -393,7 +415,7 @@ def _build_draft_message(payload: dict[str, Any]) -> str:
     account_totals: dict[str, float] = {}
     for tx in transactions:
         amount = _extract_amount(tx.get("amount"))
-        account_name = tx.get("account_name") or "Без счета"
+        account_name = _format_operation_account(tx.get("account_name"))
         if tx.get("type") == "expense":
             account_totals[account_name] = account_totals.get(
                 account_name, 0.0
@@ -410,7 +432,7 @@ def _build_draft_message(payload: dict[str, Any]) -> str:
             account_totals[account_name] = account_totals.get(
                 account_name, 0.0
             ) - amount
-            to_name = tx.get("to_account_name") or "Без счета"
+            to_name = _format_operation_account(tx.get("to_account_name"))
             account_totals[to_name] = account_totals.get(to_name, 0.0) + amount
     account_lines = [
         f"— {name}: {_format_signed_amount(total)}"
@@ -434,28 +456,83 @@ def _build_draft_message(payload: dict[str, Any]) -> str:
         "3️⃣ Счета и их изменение",
         *account_lines,
     ]
-    if missing_accounts:
-        lines.append("\n4️⃣ Что будет создано")
-        lines.append("— Счета:")
-        for item in missing_accounts:
-            name = item.get("name") or "Без названия"
-            kind = item.get("kind") or "bank"
-            lines.append(f"— {name} (тип: {kind})")
-    if missing_categories:
-        if not missing_accounts:
-            lines.append("\n4️⃣ Что будет создано")
-        lines.append("— Категории:")
-        for item in missing_categories:
-            name = item.get("name") or "Без названия"
-            lines.append(f"— {name}")
+    total_operations = len(transactions)
+    max_operations = 20
+    preview_count = 10
+    lines.append("\n4️⃣ Операции (черновик)")
+    listed_transactions = transactions
+    truncated = False
+    if total_operations > max_operations:
+        listed_transactions = transactions[:preview_count]
+        truncated = True
+        lines.append(
+            f"Показаны первые {preview_count} из {total_operations} операций."
+        )
+    missing_account_ops: set[int] = set()
+    for idx, tx in enumerate(transactions, start=1):
+        account_name = _format_operation_account(tx.get("account_name"))
+        to_account_name = _format_operation_account(tx.get("to_account_name"))
+        if account_name == "Нужно уточнить":
+            missing_account_ops.add(idx)
+        if tx.get("type") == "transfer" and to_account_name == "Нужно уточнить":
+            missing_account_ops.add(idx)
+    for idx, tx in enumerate(listed_transactions, start=1):
+        tx_type = tx.get("type") or "unknown"
+        date = tx.get("date") or "—"
+        account_name = _format_operation_account(tx.get("account_name"))
+        to_account_name = _format_operation_account(tx.get("to_account_name"))
+        category = (tx.get("category_name") or "").strip()
+        lines.append(f"\n{idx}) {date}")
+        lines.append(f"   {_format_operation_amount(tx)}")
+        lines.append(f"   Тип: {tx_type}")
+        lines.append(f"   Счет: {account_name}")
+        if tx_type == "transfer" and to_account_name != "Нужно уточнить":
+            lines.append(f"   Счет назначения: {to_account_name}")
+        if category:
+            lines.append(f"   Категория: {category}")
+        lines.append(f"   Описание: {_format_operation_description(tx)}")
+    if not listed_transactions:
+        lines.append("— (нет операций)")
+    if truncated:
+        lines.append("\n[Показать все операции]")
+    if missing_account_ops:
+        ops_list = ", ".join(str(op) for op in sorted(missing_account_ops))
+        warnings.append(
+            f"Нужен счет для операций: {ops_list}. Уточните счет или подтвердите создание."
+        )
+    if missing_accounts or missing_categories:
+        lines.append("\n5️⃣ Что будет создано")
+        if missing_accounts:
+            lines.append("— Счета:")
+            for item in missing_accounts:
+                name = item.get("name") or "Без названия"
+                kind = item.get("kind") or "bank"
+                lines.append(f"— {name} (тип: {kind})")
+        if missing_categories:
+            lines.append("— Категории:")
+            category_operation_map: dict[str, list[int]] = {}
+            for idx, tx in enumerate(transactions, start=1):
+                category_name = (tx.get("category_name") or "").strip()
+                if category_name:
+                    category_operation_map.setdefault(
+                        category_name.lower(), []
+                    ).append(idx)
+            for item in missing_categories:
+                name = item.get("name") or "Без названия"
+                operations = category_operation_map.get(name.lower(), [])
+                if operations:
+                    ops_list = ", ".join(str(op) for op in operations)
+                    lines.append(f"— {name} (операции: {ops_list})")
+                else:
+                    lines.append(f"— {name}")
     if counterparties:
-        lines.append("\n5️⃣ Контрагенты")
+        lines.append("\n6️⃣ Контрагенты")
         for name in counterparties:
             lines.append(f"— {name}")
     if warnings:
-        lines.append("\n6️⃣ Warnings")
+        lines.append("\n7️⃣ Warnings")
         lines.append(_format_warnings(warnings))
-    lines.append("\n7️⃣ Вопрос подтверждения")
+    lines.append("\n8️⃣ Вопрос подтверждения")
     lines.append("❓ Применить изменения? Напишите: Да / Отмена")
     return "\n".join(lines)
 
