@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import csv
 import datetime as dt
 import io
 import json
 import logging
 from typing import Any
 
-import openpyxl
 import pdfplumber
-import xlrd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from app.auth.jwt import get_current_user
@@ -42,30 +39,12 @@ def _ensure_supported_statement(file: UploadFile) -> None:
     is_csv = "csv" in content_type or filename.endswith(".csv")
     is_text = content_type.startswith("text/")
     is_pdf = "pdf" in content_type or filename.endswith(".pdf")
-    is_xlsx = (
-        "spreadsheetml.sheet" in content_type or filename.endswith(".xlsx")
-    )
-    is_xls = "ms-excel" in content_type or filename.endswith(".xls")
-    if not (is_csv or is_text or is_xlsx or is_xls or is_pdf):
+    if not (is_csv or is_text or is_pdf):
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Поддерживаются только PDF, XLS/XLSX или CSV выписки. "
+            detail="Поддерживаются только PDF, CSV или TXT выписки. "
             "Сохраните файл в поддерживаемом формате и попробуйте снова.",
         )
-
-
-def _cell_to_text(value: Any) -> str:
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
-def _rows_to_csv(rows: list[list[Any]]) -> str:
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    for row in rows:
-        writer.writerow([_cell_to_text(cell) for cell in row])
-    return buffer.getvalue()
 
 
 def _clean_pdf_text(raw_text: str) -> str:
@@ -97,24 +76,6 @@ def _extract_pdf_text(raw_bytes: bytes) -> str | None:
     return cleaned or None
 
 
-def _decode_xlsx(raw_bytes: bytes) -> str:
-    workbook = openpyxl.load_workbook(
-        filename=io.BytesIO(raw_bytes), data_only=True
-    )
-    sheet = workbook.active
-    rows = list(sheet.iter_rows(values_only=True))
-    table = _rows_to_csv([list(row) for row in rows])
-    return f"Sheet: {sheet.title}\n{table}".strip()
-
-
-def _decode_xls(raw_bytes: bytes) -> str:
-    workbook = xlrd.open_workbook(file_contents=raw_bytes)
-    sheet = workbook.sheet_by_index(0)
-    rows = [sheet.row_values(row_idx) for row_idx in range(sheet.nrows)]
-    table = _rows_to_csv(rows)
-    return f"Sheet: {sheet.name}\n{table}".strip()
-
-
 def _decode_statement(file: UploadFile, raw_bytes: bytes) -> str:
     content_type = (file.content_type or "").lower()
     filename = (file.filename or "").lower()
@@ -127,10 +88,6 @@ def _decode_statement(file: UploadFile, raw_bytes: bytes) -> str:
                 "Проверь, что файл — текстовый, а не скан.",
             )
         return extracted
-    if "spreadsheetml.sheet" in content_type or filename.endswith(".xlsx"):
-        return _decode_xlsx(raw_bytes)
-    if "ms-excel" in content_type or filename.endswith(".xls"):
-        return _decode_xls(raw_bytes)
     return raw_bytes.decode("utf-8", errors="replace")
 
 
@@ -160,7 +117,67 @@ def _build_context(
     }
 
 
-def _normalize_transactions(
+def _map_operation_type(op_type: str | None) -> str | None:
+    if not op_type:
+        return None
+    normalized = op_type.lower()
+    if normalized == "commission":
+        return "fee"
+    if normalized in {"income", "expense", "transfer"}:
+        return normalized
+    return normalized
+
+
+def _validate_draft_payload(payload: Any) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(payload, dict):
+        return ["Payload must be an object"]
+    required_keys = {
+        "operations",
+        "summary",
+        "accounts_to_create",
+        "categories_to_create",
+        "counterparties",
+        "warnings",
+    }
+    missing = required_keys - payload.keys()
+    if missing:
+        errors.append(f"Missing keys: {', '.join(sorted(missing))}")
+    operations = payload.get("operations")
+    if not isinstance(operations, list):
+        errors.append("operations must be a list")
+    elif not operations:
+        errors.append("operations cannot be empty")
+    else:
+        for index, item in enumerate(operations):
+            if not isinstance(item, dict):
+                errors.append(f"operations[{index}] must be an object")
+                continue
+            for key in ("date", "amount", "type", "account"):
+                if item.get(key) in (None, ""):
+                    errors.append(f"operations[{index}] missing {key}")
+            op_type = (item.get("type") or "").lower()
+            if op_type and op_type not in {
+                "income",
+                "expense",
+                "transfer",
+                "commission",
+            }:
+                errors.append(f"operations[{index}] invalid type")
+    if not isinstance(payload.get("summary"), dict):
+        errors.append("summary must be an object")
+    if not isinstance(payload.get("accounts_to_create"), list):
+        errors.append("accounts_to_create must be a list")
+    if not isinstance(payload.get("categories_to_create"), list):
+        errors.append("categories_to_create must be a list")
+    if not isinstance(payload.get("counterparties"), list):
+        errors.append("counterparties must be a list")
+    if not isinstance(payload.get("warnings"), list):
+        errors.append("warnings must be a list")
+    return errors
+
+
+def _normalize_operations(
     draft_payload: dict[str, Any],
     accounts: list[dict[str, Any]],
     categories: list[dict[str, Any]],
@@ -171,48 +188,78 @@ def _normalize_transactions(
     normalized: list[dict[str, Any]] = []
     missing_accounts: dict[str, dict[str, Any]] = {}
     missing_categories: dict[str, dict[str, Any]] = {}
-    for item in draft_payload.get("transactions") or []:
-        account_name = (item.get("account_name") or "").strip().lower()
-        to_account_name = (item.get("to_account_name") or "").strip().lower()
-        category_name = (item.get("category_name") or "").strip().lower()
-        account_id = account_map.get(account_name) if account_name else None
-        to_account_id = account_map.get(to_account_name) if to_account_name else None
-        category_id = category_map.get(category_name) if category_name else None
+    for item in draft_payload.get("accounts_to_create") or []:
+        name = (item.get("name") or "").strip()
+        if not name:
+            continue
+        account_key = name.lower()
+        if account_key in account_map or account_key in missing_accounts:
+            continue
+        kind = (item.get("type") or "bank").lower()
+        if kind not in {"cash", "bank"}:
+            kind = "bank"
+        missing_accounts[account_key] = {
+            "name": name,
+            "kind": kind,
+        }
+    for item in draft_payload.get("categories_to_create") or []:
+        name = (item.get("name") or "").strip()
+        if not name:
+            continue
+        category_key = name.lower()
+        if category_key in category_map or category_key in missing_categories:
+            continue
+        missing_categories[category_key] = {
+            "name": name,
+            "type": "expense",
+        }
+    for item in draft_payload.get("operations") or []:
+        account_name = (item.get("account") or "").strip()
+        account_key = account_name.lower()
+        category_name = (item.get("category") or "").strip()
+        category_key = category_name.lower()
+        account_id = account_map.get(account_key) if account_name else None
+        category_id = category_map.get(category_key) if category_name else None
         if account_name and not account_id:
-            if account_name not in missing_accounts:
-                missing_accounts[account_name] = {
-                    "name": item.get("account_name"),
-                    "kind": item.get("account_kind") or "bank",
-                }
-        if to_account_name and not to_account_id:
-            if to_account_name not in missing_accounts:
-                missing_accounts[to_account_name] = {
-                    "name": item.get("to_account_name"),
-                    "kind": item.get("to_account_kind") or "bank",
+            if account_key not in missing_accounts:
+                missing_accounts[account_key] = {
+                    "name": item.get("account"),
+                    "kind": "bank",
                 }
         if category_name and not category_id:
-            if category_name not in missing_categories:
-                missing_categories[category_name] = {
-                    "name": item.get("category_name"),
-                    "type": item.get("category_type") or "expense",
+            if category_key not in missing_categories:
+                missing_categories[category_key] = {
+                    "name": item.get("category"),
+                    "type": "expense",
                 }
+        op_type = (item.get("type") or "").lower()
+        mapped_type = _map_operation_type(op_type)
+        to_account_name = None
+        to_account_id = None
+        if mapped_type == "transfer":
+            counterparty = (item.get("counterparty") or "").strip()
+            if counterparty:
+                counterparty_key = counterparty.lower()
+                if counterparty_key in account_map:
+                    to_account_name = counterparty
+                    to_account_id = account_map.get(counterparty_key)
         normalized.append(
             {
                 "date": item.get("date"),
-                "type": item.get("type"),
-                "kind": item.get("kind"),
+                "type": mapped_type,
+                "kind": "normal",
                 "amount": item.get("amount"),
                 "account_id": account_id,
                 "to_account_id": to_account_id,
                 "category_id": category_id,
-                "tag": item.get("tag"),
-                "note": item.get("note"),
-                "debt": item.get("debt"),
+                "tag": "one_time",
+                "note": item.get("description"),
+                "debt": None,
                 "balance_after": item.get("balance_after"),
                 "counterparty": item.get("counterparty"),
-                "account_name": item.get("account_name"),
-                "to_account_name": item.get("to_account_name"),
-                "category_name": item.get("category_name"),
+                "account_name": item.get("account"),
+                "to_account_name": to_account_name,
+                "category_name": item.get("category"),
             }
         )
     return (
@@ -258,12 +305,55 @@ async def post_statement_draft(
     try:
         draft_payload = generate_statement_draft(statement_text_value, context)
     except LLMError as exc:
+        logger.error(
+            "LLM draft generation failed: %s. Raw response: %s",
+            exc,
+            exc.raw_response,
+        )
+        failed_payload = {
+            "error": str(exc),
+            "llm_raw_response": exc.raw_response,
+        }
+        create_statement_draft(
+            current_user["sub"],
+            budget_id,
+            source_filename,
+            source_mime,
+            statement_text_value,
+            settings.LLM_MODEL,
+            failed_payload,
+            status="failed",
+        )
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LLM response is invalid",
         ) from exc
-    if draft_payload.get("notes"):
-        draft_payload.setdefault("warnings", [])
-        draft_payload["warnings"].extend(draft_payload.get("notes") or [])
+    validation_errors = _validate_draft_payload(draft_payload)
+    if validation_errors:
+        logger.error(
+            "LLM draft validation failed: %s. Payload: %s",
+            validation_errors,
+            json.dumps(draft_payload, ensure_ascii=False),
+        )
+        failed_payload = {
+            "error": "LLM response does not match contract",
+            "validation_errors": validation_errors,
+            "llm_raw_response": json.dumps(draft_payload, ensure_ascii=False),
+        }
+        create_statement_draft(
+            current_user["sub"],
+            budget_id,
+            source_filename,
+            source_mime,
+            statement_text_value,
+            settings.LLM_MODEL,
+            failed_payload,
+            status="failed",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LLM response does not match contract",
+        )
     accounts = list_accounts(current_user["sub"], budget_id, as_of)
     categories = list_categories(current_user["sub"], budget_id)
     draft_payload["context"] = context
@@ -272,7 +362,7 @@ async def post_statement_draft(
         warnings,
         missing_accounts,
         missing_categories,
-    ) = _normalize_transactions(
+    ) = _normalize_operations(
         draft_payload, accounts, categories
     )
     draft_payload["normalized_transactions"] = normalized_transactions
@@ -317,12 +407,53 @@ def revise_statement_draft(
             {"context": context},
         )
     except LLMError as exc:
+        logger.error(
+            "LLM revise failed: %s. Raw response: %s", exc, exc.raw_response
+        )
+        update_statement_draft(
+            current_user["sub"],
+            draft_id,
+            {
+                "draft_payload": {
+                    "error": str(exc),
+                    "llm_raw_response": exc.raw_response,
+                },
+                "feedback": feedback,
+                "status": "failed",
+                "updated_at": dt.datetime.utcnow().isoformat(),
+            },
+        )
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LLM response is invalid",
         ) from exc
-    if revised_payload.get("notes"):
-        revised_payload.setdefault("warnings", [])
-        revised_payload["warnings"].extend(revised_payload.get("notes") or [])
+    validation_errors = _validate_draft_payload(revised_payload)
+    if validation_errors:
+        logger.error(
+            "LLM revise validation failed: %s. Payload: %s",
+            validation_errors,
+            json.dumps(revised_payload, ensure_ascii=False),
+        )
+        update_statement_draft(
+            current_user["sub"],
+            draft_id,
+            {
+                "draft_payload": {
+                    "error": "LLM response does not match contract",
+                    "validation_errors": validation_errors,
+                    "llm_raw_response": json.dumps(
+                        revised_payload, ensure_ascii=False
+                    ),
+                },
+                "feedback": feedback,
+                "status": "failed",
+                "updated_at": dt.datetime.utcnow().isoformat(),
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LLM response does not match contract",
+        )
     revised_payload["context"] = context
     accounts = list_accounts(current_user["sub"], draft["budget_id"])
     categories = list_categories(current_user["sub"], draft["budget_id"])
@@ -331,7 +462,7 @@ def revise_statement_draft(
         warnings,
         missing_accounts,
         missing_categories,
-    ) = _normalize_transactions(
+    ) = _normalize_operations(
         revised_payload, accounts, categories
     )
     revised_payload["normalized_transactions"] = normalized_transactions

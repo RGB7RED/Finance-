@@ -30,8 +30,8 @@ STATEMENT_COMMAND_TEXT = (
     "📄 Загрузка банковской выписки\n\n"
     "1️⃣ Пришлите файл выписки:\n"
     "— PDF\n"
-    "— Excel (.xls / .xlsx)\n"
-    "— CSV\n\n"
+    "— CSV\n"
+    "— TXT\n\n"
     "2️⃣ Выписка должна содержать:\n"
     "— дату операции\n"
     "— сумму\n"
@@ -46,7 +46,7 @@ STATEMENT_COMMAND_TEXT = (
 
 INVALID_FILE_TEXT = (
     "❌ Неверный формат файла.\n\n"
-    "Пожалуйста, отправь выписку в формате PDF, XLS/XLSX или CSV."
+    "Пожалуйста, отправь выписку в формате PDF, CSV или TXT."
 )
 
 CONFIRM_SUCCESS_TEXT = (
@@ -195,9 +195,17 @@ async def _ensure_budget(
 def _is_csv_document(document: Any) -> bool:
     mime_type = (getattr(document, "mime_type", "") or "").lower()
     filename = (getattr(document, "file_name", "") or "").lower()
-    if mime_type == "text/csv":
+    if mime_type in ("text/csv", "application/csv"):
         return True
     return filename.endswith(".csv")
+
+
+def _is_text_document(document: Any) -> bool:
+    mime_type = (getattr(document, "mime_type", "") or "").lower()
+    filename = (getattr(document, "file_name", "") or "").lower()
+    if mime_type.startswith("text/"):
+        return True
+    return filename.endswith(".txt")
 
 
 def _is_pdf_document(document: Any) -> bool:
@@ -206,14 +214,6 @@ def _is_pdf_document(document: Any) -> bool:
     if mime_type == "application/pdf":
         return True
     return filename.endswith(".pdf")
-
-
-def _is_excel_document(document: Any) -> bool:
-    mime_type = (getattr(document, "mime_type", "") or "").lower()
-    filename = (getattr(document, "file_name", "") or "").lower()
-    if "spreadsheetml.sheet" in mime_type or "ms-excel" in mime_type:
-        return True
-    return filename.endswith((".xls", ".xlsx"))
 
 
 def _clean_pdf_text(raw_text: str) -> str:
@@ -351,7 +351,7 @@ def _format_signed_amount(value: float) -> str:
 def _format_operation_amount(tx: dict[str, Any]) -> str:
     amount = _extract_amount(tx.get("amount"))
     tx_type = tx.get("type")
-    if tx_type in {"expense", "fee"} and amount > 0:
+    if tx_type in {"expense", "commission"} and amount > 0:
         amount = -amount
     return _format_signed_amount(amount)
 
@@ -362,7 +362,7 @@ def _format_operation_account(value: Any) -> str:
 
 
 def _format_operation_description(tx: dict[str, Any]) -> str:
-    note = (tx.get("note") or "").strip()
+    note = (tx.get("description") or "").strip()
     counterparty = (tx.get("counterparty") or "").strip()
     if note:
         return note
@@ -399,13 +399,13 @@ def _format_http_error(exc: httpx.HTTPError) -> str:
 
 
 def _build_draft_message(payload: dict[str, Any]) -> str:
-    transactions = payload.get("transactions") or []
+    transactions = payload.get("operations") or []
     warnings = list(payload.get("warnings") or [])
     missing_accounts = payload.get("missing_accounts") or []
     missing_categories = payload.get("missing_categories") or []
     counterparties = payload.get("counterparties") or []
     expenses = [tx for tx in transactions if tx.get("type") == "expense"]
-    fees = [tx for tx in transactions if tx.get("type") == "fee"]
+    fees = [tx for tx in transactions if tx.get("type") == "commission"]
     incomes = [tx for tx in transactions if tx.get("type") == "income"]
     transfers = [tx for tx in transactions if tx.get("type") == "transfer"]
     expense_total = sum(_extract_amount(tx.get("amount")) for tx in expenses)
@@ -415,12 +415,12 @@ def _build_draft_message(payload: dict[str, Any]) -> str:
     account_totals: dict[str, float] = {}
     for tx in transactions:
         amount = _extract_amount(tx.get("amount"))
-        account_name = _format_operation_account(tx.get("account_name"))
+        account_name = _format_operation_account(tx.get("account"))
         if tx.get("type") == "expense":
             account_totals[account_name] = account_totals.get(
                 account_name, 0.0
             ) - amount
-        elif tx.get("type") == "fee":
+        elif tx.get("type") == "commission":
             account_totals[account_name] = account_totals.get(
                 account_name, 0.0
             ) - amount
@@ -432,8 +432,11 @@ def _build_draft_message(payload: dict[str, Any]) -> str:
             account_totals[account_name] = account_totals.get(
                 account_name, 0.0
             ) - amount
-            to_name = _format_operation_account(tx.get("to_account_name"))
-            account_totals[to_name] = account_totals.get(to_name, 0.0) + amount
+            counterparty = _format_operation_account(tx.get("counterparty"))
+            if counterparty != "Нужно уточнить":
+                account_totals[counterparty] = account_totals.get(
+                    counterparty, 0.0
+                ) + amount
     account_lines = [
         f"— {name}: {_format_signed_amount(total)}"
         for name, total in account_totals.items()
@@ -470,24 +473,21 @@ def _build_draft_message(payload: dict[str, Any]) -> str:
         )
     missing_account_ops: set[int] = set()
     for idx, tx in enumerate(transactions, start=1):
-        account_name = _format_operation_account(tx.get("account_name"))
-        to_account_name = _format_operation_account(tx.get("to_account_name"))
+        account_name = _format_operation_account(tx.get("account"))
         if account_name == "Нужно уточнить":
-            missing_account_ops.add(idx)
-        if tx.get("type") == "transfer" and to_account_name == "Нужно уточнить":
             missing_account_ops.add(idx)
     for idx, tx in enumerate(listed_transactions, start=1):
         tx_type = tx.get("type") or "unknown"
         date = tx.get("date") or "—"
-        account_name = _format_operation_account(tx.get("account_name"))
-        to_account_name = _format_operation_account(tx.get("to_account_name"))
-        category = (tx.get("category_name") or "").strip()
+        account_name = _format_operation_account(tx.get("account"))
+        counterparty = _format_operation_account(tx.get("counterparty"))
+        category = (tx.get("category") or "").strip()
         lines.append(f"\n{idx}) {date}")
         lines.append(f"   {_format_operation_amount(tx)}")
         lines.append(f"   Тип: {tx_type}")
         lines.append(f"   Счет: {account_name}")
-        if tx_type == "transfer" and to_account_name != "Нужно уточнить":
-            lines.append(f"   Счет назначения: {to_account_name}")
+        if counterparty != "Нужно уточнить":
+            lines.append(f"   Контрагент: {counterparty}")
         if category:
             lines.append(f"   Категория: {category}")
         lines.append(f"   Описание: {_format_operation_description(tx)}")
@@ -512,7 +512,7 @@ def _build_draft_message(payload: dict[str, Any]) -> str:
             lines.append("— Категории:")
             category_operation_map: dict[str, list[int]] = {}
             for idx, tx in enumerate(transactions, start=1):
-                category_name = (tx.get("category_name") or "").strip()
+                category_name = (tx.get("category") or "").strip()
                 if category_name:
                     category_operation_map.setdefault(
                         category_name.lower(), []
@@ -552,8 +552,8 @@ async def handle_document(
     document = update.message.document if update.message else None
     if not document or not (
         _is_csv_document(document)
+        or _is_text_document(document)
         or _is_pdf_document(document)
-        or _is_excel_document(document)
     ):
         await update.effective_message.reply_text(INVALID_FILE_TEXT)
         return

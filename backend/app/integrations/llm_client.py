@@ -9,7 +9,9 @@ from app.core.config import settings
 
 
 class LLMError(RuntimeError):
-    pass
+    def __init__(self, message: str, raw_response: str | None = None) -> None:
+        super().__init__(message)
+        self.raw_response = raw_response
 
 
 def _build_headers() -> dict[str, str]:
@@ -34,73 +36,61 @@ def generate_statement_draft(
 ) -> dict[str, Any]:
     system_prompt = (
         "Ты финансовый ассистент. Твоя задача — разобрать банковскую выписку "
-        "и предложить черновик изменений. Всегда отвечай валидным JSON без "
-        "комментариев и без Markdown.\n\n"
+        "и вернуть детерминированный JSON-ответ. Всегда отвечай валидным JSON, "
+        "без комментариев и без Markdown. НЕЛЬЗЯ возвращать текст.\n\n"
         "Критичные правила:\n"
-        "- НЕ использовать OCR. Если PDF выглядит как скан, укажи это в notes.\n"
+        "- НЕ использовать OCR. Только текстовый PDF.\n"
         "- Обработай ВСЕ страницы и ВСЕ операции, ничего не пропускай.\n"
-        "- Типы операций строго: income, expense, transfer, fee.\n"
+        "- Типы операций строго: income, expense, transfer, commission.\n"
         "- Переводы («Перевод от/для», «Перевод СБП») всегда transfer.\n"
         "- Переводы не являются доходом/расходом.\n"
-        "- Комиссии банка — fee.\n"
-        "- Основной счет выписки обязан быть указан (карта/счет).\n"
-        "- Люди (имена с инициалами/ФИО) — это контрагенты, НЕ счета.\n"
+        "- Комиссии банка — commission.\n"
+        "- Основной счет выписки обязан быть указан.\n"
+        "- Люди (имена с инициалами/ФИО) — контрагенты, НЕ счета.\n"
         "- Категорию из выписки создавать можно: не пиши warning, если она создается.\n"
-        "- Балансы не искажать: проверяй сумму операций и остатки.\n\n"
-        "Формат ответа:\n"
+        "- Балансы не искажать: проверяй сумму операций и остатки.\n"
+        "- Если операций больше 20, верни первые 20, остальные агрегируй в summary.\n"
+        "- operations[] НЕ может быть пустым.\n\n"
+        "Формат ответа (строго):\n"
         "{\n"
-        '  "summary": "короткое описание",\n'
-        '  "transactions": [\n'
+        '  "operations": [\n'
         "    {\n"
         '      "date": "YYYY-MM-DD",\n'
-        '      "type": "income|expense|transfer|fee",\n'
-        '      "kind": "normal|transfer|goal_transfer|debt",\n'
-        '      "amount": 12345,\n'
-        '      "account_name": "название счета",\n'
-        '      "account_kind": "cash|bank|card",\n'
-        '      "to_account_name": "название счета назначения или null",\n'
-        '      "to_account_kind": "cash|bank|card|null",\n'
-        '      "category_name": "категория или null",\n'
-        '      "category_type": "expense|income|null",\n'
-        '      "tag": "one_time|subscription",\n'
-        '      "note": "краткая заметка или null",\n'
-        '      "balance_after": 0,\n'
-        '      "counterparty": "контрагент или null",\n'
-        '      "debt": {"direction": "borrowed|repaid", "debt_type": "people|cards"}\n'
+        '      "amount": -650.00,\n'
+        '      "currency": "RUB",\n'
+        '      "type": "expense|income|transfer|commission",\n'
+        '      "account": "Счет 40817810955192982036",\n'
+        '      "counterparty": "Пятерочка",\n'
+        '      "category": "Супермаркеты",\n'
+        '      "description": "Покупка",\n'
+        '      "balance_after": 12345.67\n'
         "    }\n"
         "  ],\n"
-        '  "balance_adjustments": [\n'
-        "    {\n"
-        '      "date": "YYYY-MM-DD",\n'
-        '      "account_name": "название счета",\n'
-        '      "delta": 0,\n'
-        '      "note": "пояснение или null"\n'
-        "    }\n"
-        "  ],\n"
-        '  "debts": {\n'
-        '    "date": "YYYY-MM-DD",\n'
-        '    "credit_cards_total": 0,\n'
-        '    "people_debts_total": 0\n'
-        "  },\n"
-        '  "counterparties": ["контрагенты, если есть"],\n'
-        '  "statement_stats": {\n'
-        '    "total": 0,\n'
-        '    "by_type": {"income": 0, "expense": 0, "transfer": 0, "fee": 0},\n'
-        '    "unparsed": [{"count": 0, "reason": "почему не распознано"}]\n'
-        "  },\n"
-        '  "balance_check": {\n'
-        '    "opening_balance": 0,\n'
-        '    "closing_balance": 0,\n'
+        '  "summary": {\n'
+        '    "total_operations": 0,\n'
         '    "income_total": 0,\n'
         '    "expense_total": 0,\n'
-        '    "transfer_net": 0,\n'
-        '    "fee_total": 0,\n'
-        '    "difference": 0,\n'
-        '    "is_balanced": true\n'
+        '    "net_total": 0,\n'
+        '    "by_account": {}\n'
         "  },\n"
-        '  "notes": ["предупреждения или пустой массив"]\n'
+        '  "accounts_to_create": [\n'
+        "    {\n"
+        '      "name": "Счет 40817810955192982036",\n'
+        '      "type": "bank",\n'
+        '      "currency": "RUB"\n'
+        "    }\n"
+        "  ],\n"
+        '  "categories_to_create": [\n'
+        "    {\n"
+        '      "name": "Супермаркеты",\n'
+        '      "parent": null\n'
+        "    }\n"
+        "  ],\n"
+        '  "counterparties": ["контрагенты, если есть"],\n'
+        '  "warnings": ["только если дата/сумма/тип не распознаны"]\n'
         "}\n"
-        "Если данных недостаточно, оставляй массивы пустыми и поля debts null."
+        "Если данных недостаточно, массивы оставляй пустыми, но ключи всегда "
+        "присутствуют."
     )
     user_prompt = (
         "Контекст пользователя (счета, остатки, долги, категории):\n"
@@ -121,14 +111,17 @@ def generate_statement_draft(
             response.raise_for_status()
             data = response.json()
     except httpx.HTTPError as exc:
-        raise LLMError(f"LLM request failed: {exc}") from exc
+        raw_response = None
+        if exc.response is not None:
+            raw_response = exc.response.text
+        raise LLMError(f"LLM request failed: {exc}", raw_response) from exc
     choices = data.get("choices") or []
     if not choices:
-        raise LLMError("LLM response missing choices")
+        raise LLMError("LLM response missing choices", json.dumps(data))
     message = choices[0].get("message", {}).get("content")
     if not message:
-        raise LLMError("LLM response missing content")
+        raise LLMError("LLM response missing content", json.dumps(data))
     try:
         return json.loads(message)
     except json.JSONDecodeError as exc:
-        raise LLMError("LLM returned invalid JSON") from exc
+        raise LLMError("LLM returned invalid JSON", message) from exc
