@@ -7,6 +7,8 @@
 - TELEGRAM_BOT_TOKEN
 - MF_TELEGRAM_BOT_TOKEN
 - BACKEND_API_BASE_URL
+- PUBLIC_BASE_URL
+- TELEGRAM_SECRET
 - DATABASE_URL
 - SUPABASE_DB_URL
 - SUPABASE_URL
@@ -15,7 +17,7 @@
 - CORS_ORIGINS
 - LOG_LEVEL
 
-Telegram token can be provided via `TELEGRAM_BOT_TOKEN` or `MF_TELEGRAM_BOT_TOKEN` (the backend uses the first configured key).
+For webhook startup, configure `TELEGRAM_BOT_TOKEN` explicitly. `MF_TELEGRAM_BOT_TOKEN` is still supported by auth helper fallback, but webhook initialization reads `TELEGRAM_BOT_TOKEN`.
 
 ### CORS_ORIGINS format
 
@@ -37,3 +39,10 @@ Telegram token can be provided via `TELEGRAM_BOT_TOKEN` or `MF_TELEGRAM_BOT_TOKE
 - SUPABASE_SERVICE_ROLE_KEY (service role key)
 
 > SUPABASE_SERVICE_ROLE_KEY never goes to the frontend.
+
+
+### Telegram webhook (Railway)
+
+- `TELEGRAM_BOT_TOKEN` — токен Telegram-бота (обязателен для webhook-режима).
+- `PUBLIC_BASE_URL` — публичный HTTPS URL backend в Railway, например `https://your-app-name.up.railway.app`.
+- `TELEGRAM_SECRET` — секрет для проверки заголовка `X-Telegram-Bot-Api-Secret-Token`.

@@ -1,6 +1,8 @@
 import logging
 from urllib.parse import urlparse
 
+import os
+
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from postgrest.exceptions import APIError
@@ -10,17 +12,10 @@ from app.api.ai_routes import router as ai_router
 from app.api.reconcile_routes import router as reconcile_router
 from app.api.reports_routes import router as reports_router
 from app.api.routes import router
-from app.core.config import (
-    get_telegram_bot_token,
-    get_telegram_bot_token_source,
-    settings,
-)
+from app.api.telegram_webhook_routes import router as telegram_webhook_router
+from app.core.config import get_telegram_bot_token, get_telegram_bot_token_source, settings
 from app.integrations.supabase_client import get_supabase_client
-from app.integrations.telegram_bot import build_application, register_handlers
-from app.integrations.telegram_polling_lock import (
-    acquire_telegram_polling_lock,
-    release_telegram_polling_lock,
-)
+from app.integrations.telegram_bot import init_telegram_application, telegram_application
 
 app = FastAPI()
 logger = logging.getLogger(__name__)
@@ -97,35 +92,24 @@ def log_cors_settings() -> None:
 
 @app.on_event("startup")
 async def start_telegram_bot() -> None:
-    token = get_telegram_bot_token()
-    if not token:
+    if not os.getenv("TELEGRAM_BOT_TOKEN"):
         logger.info("telegram_bot_startup=skipped reason=token_missing")
         return
-    lock_result = acquire_telegram_polling_lock()
-    if lock_result.mode in ("skipped", "error"):
-        logger.info("telegram_bot_startup=skipped reason=lock_not_acquired")
-        return
-    telegram_app = build_application(token)
-    register_handlers(telegram_app)
-    await telegram_app.initialize()
-    await telegram_app.start()
-    await telegram_app.updater.start_polling()
-    app.state.telegram_app = telegram_app
-    app.state.telegram_lock_connection = lock_result.connection
-    logger.info("telegram_bot_startup=ok")
+
+    app_instance = await init_telegram_application()
+    webhook_url = os.environ["PUBLIC_BASE_URL"].rstrip("/") + "/telegram/webhook"
+
+    await app_instance.bot.set_webhook(
+        webhook_url,
+        secret_token=os.environ["TELEGRAM_SECRET"],
+    )
+    logger.info("Webhook set to %s", webhook_url)
 
 
 @app.on_event("shutdown")
 async def stop_telegram_bot() -> None:
-    telegram_app = getattr(app.state, "telegram_app", None)
-    if telegram_app:
-        await telegram_app.updater.stop()
-        await telegram_app.stop()
-        await telegram_app.shutdown()
-    release_telegram_polling_lock(
-        getattr(app.state, "telegram_lock_connection", None)
-    )
-    if telegram_app:
+    if telegram_application:
+        await telegram_application.shutdown()
         logger.info("telegram_bot_shutdown=ok")
 
 
@@ -139,6 +123,7 @@ app.include_router(ai_router)
 app.include_router(goals_router)
 app.include_router(reports_router)
 app.include_router(reconcile_router)
+app.include_router(telegram_webhook_router)
 
 
 @app.get("/health")
