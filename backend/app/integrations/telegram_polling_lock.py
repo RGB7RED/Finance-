@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Optional
 
 import psycopg
@@ -12,20 +13,28 @@ logger = logging.getLogger(__name__)
 TELEGRAM_POLLING_LOCK_KEY = 123456
 
 
+@dataclass
+class TelegramPollingLockResult:
+    mode: str
+    connection: psycopg.Connection | None = None
+
+
 def _get_database_url() -> str | None:
     return settings.DATABASE_URL or settings.SUPABASE_DB_URL
 
 
-def acquire_telegram_polling_lock() -> Optional[psycopg.Connection]:
+def acquire_telegram_polling_lock() -> TelegramPollingLockResult:
     database_url = _get_database_url()
     if not database_url:
-        logger.error("telegram_bot_lock=failed reason=missing_database_url")
-        return None
+        logger.warning(
+            "telegram_bot_lock=disabled reason=missing_database_url"
+        )
+        return TelegramPollingLockResult(mode="disabled")
     try:
         connection = psycopg.connect(database_url, autocommit=True)
     except Exception:
         logger.exception("telegram_bot_lock=failed reason=connection_error")
-        return None
+        return TelegramPollingLockResult(mode="error")
     try:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -36,13 +45,13 @@ def acquire_telegram_polling_lock() -> Optional[psycopg.Connection]:
     except Exception:
         logger.exception("telegram_bot_lock=failed reason=lock_query_error")
         connection.close()
-        return None
+        return TelegramPollingLockResult(mode="error")
     if not acquired:
         connection.close()
-        logger.info("telegram_bot_lock=skipped reason=lock_busy")
-        return None
+        logger.info("telegram_bot_lock=skipped reason=lock_not_acquired")
+        return TelegramPollingLockResult(mode="skipped")
     logger.info("telegram_bot_lock=acquired key=%s", TELEGRAM_POLLING_LOCK_KEY)
-    return connection
+    return TelegramPollingLockResult(mode="acquired", connection=connection)
 
 
 def release_telegram_polling_lock(
