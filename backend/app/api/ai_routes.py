@@ -77,9 +77,7 @@ def _extract_pdf_text(raw_bytes: bytes) -> str | None:
             for table in tables:
                 rows = []
                 for row in table:
-                    rows.append(
-                        " | ".join((cell or "").strip() for cell in row)
-                    )
+                    rows.append(" | ".join((cell or "").strip() for cell in row))
                 if rows:
                     pages_text.append("\n".join(rows))
     cleaned = _clean_pdf_text("\n".join(pages_text))
@@ -116,8 +114,7 @@ def _parse_csv_rows(raw_bytes: bytes) -> list[dict[str, str]]:
         rows: list[dict[str, str]] = []
         for row in reader:
             normalized = {
-                (key or "").strip(): (value or "").strip()
-                for key, value in row.items()
+                (key or "").strip(): (value or "").strip() for key, value in row.items()
             }
             rows.append(normalized)
         return rows
@@ -149,9 +146,7 @@ def _normalize_csv_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     normalized_rows: list[dict[str, Any]] = []
     for row in rows:
         lowered = {key.lower(): value for key, value in row.items()}
-        date_value = next(
-            (lowered[key] for key in date_keys if key in lowered), None
-        )
+        date_value = next((lowered[key] for key in date_keys if key in lowered), None)
         amount_value = next(
             (lowered[key] for key in amount_keys if key in lowered), None
         )
@@ -161,9 +156,7 @@ def _normalize_csv_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
         balance_value = next(
             (lowered[key] for key in balance_keys if key in lowered), None
         )
-        debit_value = next(
-            (lowered[key] for key in debit_keys if key in lowered), None
-        )
+        debit_value = next((lowered[key] for key in debit_keys if key in lowered), None)
         credit_value = next(
             (lowered[key] for key in credit_keys if key in lowered), None
         )
@@ -403,9 +396,7 @@ def _validate_apply_operations(
             }
         if op_type == "transfer":
             to_account_id = item.get("to_account_id")
-            to_account_name = (
-                item.get("to_account_name") or ""
-            ).strip().lower()
+            to_account_name = (item.get("to_account_name") or "").strip().lower()
             if to_account_id:
                 if to_account_id not in account_ids:
                     return {
@@ -470,7 +461,10 @@ def _validate_apply_operations(
                         },
                     }
             elif op_type == "expense":
-                if "прочее" not in category_map and "прочее" not in missing_category_names:
+                if (
+                    "прочее" not in category_map
+                    and "прочее" not in missing_category_names
+                ):
                     missing_category_names.add("прочее")
     return None
 
@@ -498,13 +492,9 @@ def _rollback_statement_apply(
             "id", created_adjustment_event_ids
         ).execute()
     if created_account_ids:
-        client.table("accounts").delete().in_(
-            "id", created_account_ids
-        ).execute()
+        client.table("accounts").delete().in_("id", created_account_ids).execute()
     if created_category_ids:
-        client.table("categories").delete().in_(
-            "id", created_category_ids
-        ).execute()
+        client.table("categories").delete().in_("id", created_category_ids).execute()
     if previous_debts and payload.get("debts"):
         target_date = dt.date.fromisoformat(payload["debts"].get("date"))
         upsert_debts(
@@ -729,9 +719,7 @@ async def post_statement_draft(
                 "source_type": "csv",
                 "rows": normalized_rows,
             }
-            statement_text_value = json.dumps(
-                statement_payload, ensure_ascii=False
-            )
+            statement_text_value = json.dumps(statement_payload, ensure_ascii=False)
         elif is_pdf:
             statement_text = _decode_statement(file, raw)
             pdf_rows = _pdf_text_to_rows(statement_text)
@@ -740,9 +728,7 @@ async def post_statement_draft(
                 "source_type": "pdf",
                 "rows": pdf_rows,
             }
-            statement_text_value = json.dumps(
-                statement_payload, ensure_ascii=False
-            )
+            statement_text_value = json.dumps(statement_payload, ensure_ascii=False)
             csv_rows_count = None
         else:
             statement_text_value = _decode_statement(file, raw)
@@ -752,9 +738,7 @@ async def post_statement_draft(
                 "source_type": "text",
                 "rows": text_rows,
             }
-            statement_text_value = json.dumps(
-                statement_payload, ensure_ascii=False
-            )
+            statement_text_value = json.dumps(statement_payload, ensure_ascii=False)
             csv_rows_count = None
         logger.info(
             "Statement import: rows_parsed=%d, file_name=%s",
@@ -767,16 +751,17 @@ async def post_statement_draft(
         context["source"] = source_value
     try:
         draft_payload = generate_statement_draft(statement_text_value, context)
-    except LLMError as exc:
+    except RuntimeError as exc:
         logger.error(
-            "LLM draft generation failed: %s. Raw response: %s",
+            "LLM draft generation failed: %s",
             exc,
-            exc.raw_response,
         )
         failed_payload = {
             "error": str(exc),
-            "llm_raw_response": exc.raw_response,
         }
+        raw_response = getattr(exc, "raw_response", None)
+        if raw_response is not None:
+            failed_payload["llm_raw_response"] = raw_response
         create_statement_draft(
             current_user["sub"],
             budget_id,
@@ -788,8 +773,8 @@ async def post_statement_draft(
             status="failed",
         )
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="LLM response is invalid",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
         ) from exc
     validation_errors = _validate_draft_payload(draft_payload)
     if validation_errors:
@@ -844,9 +829,7 @@ async def post_statement_draft(
         warnings,
         missing_accounts,
         missing_categories,
-    ) = _normalize_operations(
-        draft_payload, accounts, categories
-    )
+    ) = _normalize_operations(draft_payload, accounts, categories)
     draft_payload["normalized_transactions"] = normalized_transactions
     if missing_accounts:
         draft_payload["missing_accounts"] = missing_accounts
@@ -875,9 +858,7 @@ def revise_statement_draft(
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     draft = get_statement_draft(current_user["sub"], draft_id)
-    context = _build_context(
-        current_user["sub"], draft["budget_id"], dt.date.today()
-    )
+    context = _build_context(current_user["sub"], draft["budget_id"], dt.date.today())
     base_payload = {
         "statement_text": draft.get("source_text"),
         "previous_draft": draft.get("draft_payload"),
@@ -889,9 +870,7 @@ def revise_statement_draft(
             {"context": context},
         )
     except LLMError as exc:
-        logger.error(
-            "LLM revise failed: %s. Raw response: %s", exc, exc.raw_response
-        )
+        logger.error("LLM revise failed: %s. Raw response: %s", exc, exc.raw_response)
         update_statement_draft(
             current_user["sub"],
             draft_id,
@@ -923,9 +902,7 @@ def revise_statement_draft(
                 "draft_payload": {
                     "error": "LLM response does not match contract",
                     "validation_errors": validation_errors,
-                    "llm_raw_response": json.dumps(
-                        revised_payload, ensure_ascii=False
-                    ),
+                    "llm_raw_response": json.dumps(revised_payload, ensure_ascii=False),
                 },
                 "feedback": feedback,
                 "status": "failed",
@@ -944,9 +921,7 @@ def revise_statement_draft(
         warnings,
         missing_accounts,
         missing_categories,
-    ) = _normalize_operations(
-        revised_payload, accounts, categories
-    )
+    ) = _normalize_operations(revised_payload, accounts, categories)
     revised_payload["normalized_transactions"] = normalized_transactions
     if missing_accounts:
         revised_payload["missing_accounts"] = missing_accounts
@@ -1099,9 +1074,7 @@ def apply_statement_draft(
                 )
                 created_account_ids.append(created_account["id"])
                 account_map[name.lower()] = created_account["id"]
-        accounts = list_accounts(
-            current_user["sub"], draft["budget_id"], as_of
-        )
+        accounts = list_accounts(current_user["sub"], draft["budget_id"], as_of)
         categories = list_categories(current_user["sub"], draft["budget_id"])
         account_map = _account_name_map(accounts)
         category_map = _category_name_map(categories)
@@ -1133,9 +1106,7 @@ def apply_statement_draft(
                     },
                 )
             if item.get("type") == "transfer" and not item.get("to_account_id"):
-                to_account_name = (
-                    item.get("to_account_name") or ""
-                ).strip().lower()
+                to_account_name = (item.get("to_account_name") or "").strip().lower()
                 item["to_account_id"] = account_map.get(to_account_name)
             if item.get("type") == "transfer" and not item.get("to_account_id"):
                 raise StatementApplyError(
@@ -1211,9 +1182,7 @@ def apply_statement_draft(
             )
             account_id = account_map.get(account_name)
             if not account_id:
-                raise ValueError(
-                    f"Не найден счет для корректировки: {account_name}"
-                )
+                raise ValueError(f"Не найден счет для корректировки: {account_name}")
             event = create_balance_event(
                 current_user["sub"],
                 draft["budget_id"],

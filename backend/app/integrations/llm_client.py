@@ -108,15 +108,17 @@ def generate_statement_draft(
     )
     url = f"{settings.LLM_API_BASE_URL.rstrip('/')}/chat/completions"
     try:
-        with httpx.Client(timeout=60) as client:
+        with httpx.Client(timeout=httpx.Timeout(60.0)) as client:
             response = client.post(url, headers=_build_headers(), json=payload)
             response.raise_for_status()
             data = response.json()
-    except httpx.HTTPError as exc:
-        raw_response = None
-        if exc.response is not None:
-            raw_response = exc.response.text
-        raise LLMError(f"LLM request failed: {exc}", raw_response) from exc
+    except httpx.ReadTimeout as exc:
+        raise RuntimeError("LLM request timed out") from exc
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response else None
+        raise RuntimeError(f"LLM HTTP error: {status}") from exc
+    except httpx.RequestError as exc:
+        raise RuntimeError("LLM request failed") from exc
     choices = data.get("choices") or []
     if not choices:
         raise LLMError("LLM response missing choices", json.dumps(data))
