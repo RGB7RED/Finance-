@@ -101,8 +101,8 @@ async def start_telegram_bot() -> None:
     if not token:
         logger.info("telegram_bot_startup=skipped reason=token_missing")
         return
-    lock_connection = acquire_telegram_polling_lock()
-    if not lock_connection:
+    lock_result = acquire_telegram_polling_lock()
+    if lock_result.mode in ("skipped", "error"):
         logger.info("telegram_bot_startup=skipped reason=lock_not_acquired")
         return
     telegram_app = build_application(token)
@@ -111,7 +111,7 @@ async def start_telegram_bot() -> None:
     await telegram_app.start()
     await telegram_app.updater.start_polling()
     app.state.telegram_app = telegram_app
-    app.state.telegram_lock_connection = lock_connection
+    app.state.telegram_lock_connection = lock_result.connection
     logger.info("telegram_bot_startup=ok")
 
 
