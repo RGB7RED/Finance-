@@ -51,15 +51,9 @@ INVALID_FILE_TEXT = (
     "Пожалуйста, отправь выписку в формате PDF, CSV или TXT."
 )
 
-CONFIRM_SUCCESS_TEXT = (
-    "✅ Выписка успешно применена.\n"
-    "Операции добавлены в учёт."
-)
+CONFIRM_SUCCESS_TEXT = "✅ Выписка успешно применена.\n" "Операции добавлены в учёт."
 
-PDF_RECEIVED_TEXT = (
-    "📄 Получен PDF-файл.\n"
-    "Пробую извлечь текст выписки…"
-)
+PDF_RECEIVED_TEXT = "📄 Получен PDF-файл.\n" "Пробую извлечь текст выписки…"
 
 PDF_UNSUPPORTED_TEXT = (
     "⚠️ Не удалось корректно извлечь данные из PDF.\n"
@@ -76,9 +70,7 @@ class DraftContext:
     budget_id: str
 
 
-def split_text(
-    text: str, max_len: int = MAX_TELEGRAM_MESSAGE_LEN
-) -> list[str]:
+def split_text(text: str, max_len: int = MAX_TELEGRAM_MESSAGE_LEN) -> list[str]:
     parts = []
     while len(text) > max_len:
         split_at = text.rfind("\n", 0, max_len)
@@ -194,9 +186,7 @@ async def _ensure_budget(
         )
         return None
     if not budgets:
-        await update.effective_message.reply_text(
-            "Не найден бюджет для пользователя."
-        )
+        await update.effective_message.reply_text("Не найден бюджет для пользователя.")
         return None
     selected = budgets[0]
     budget_id = selected.get("id") if isinstance(selected, dict) else None
@@ -262,9 +252,7 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str | None:
             for table in tables:
                 rows = []
                 for row in table:
-                    rows.append(
-                        " | ".join((cell or "").strip() for cell in row)
-                    )
+                    rows.append(" | ".join((cell or "").strip() for cell in row))
                 if rows:
                     pages_text.append("\n".join(rows))
     cleaned = _clean_pdf_text("\n".join(pages_text))
@@ -459,10 +447,7 @@ def _format_statement_apply_error(payload: dict[str, Any]) -> str | None:
             "Импорт остановлен, данные не изменены"
         )
     if reason == "already_applied":
-        return (
-            "⚠️ Выписка уже применена ранее.\n"
-            "Повторное применение запрещено."
-        )
+        return "⚠️ Выписка уже применена ранее.\n" "Повторное применение запрещено."
     if reason == "draft_failed":
         return (
             "❌ Не удалось применить выписку\n"
@@ -526,26 +511,26 @@ def _build_draft_messages(payload: dict[str, Any]) -> list[str]:
         amount = _extract_amount(tx.get("amount"))
         account_name = _format_operation_account(tx.get("account"))
         if tx.get("type") == "expense":
-            account_totals[account_name] = account_totals.get(
-                account_name, 0.0
-            ) - amount
+            account_totals[account_name] = (
+                account_totals.get(account_name, 0.0) - amount
+            )
         elif tx.get("type") == "commission":
-            account_totals[account_name] = account_totals.get(
-                account_name, 0.0
-            ) - amount
+            account_totals[account_name] = (
+                account_totals.get(account_name, 0.0) - amount
+            )
         elif tx.get("type") == "income":
-            account_totals[account_name] = account_totals.get(
-                account_name, 0.0
-            ) + amount
+            account_totals[account_name] = (
+                account_totals.get(account_name, 0.0) + amount
+            )
         elif tx.get("type") == "transfer":
-            account_totals[account_name] = account_totals.get(
-                account_name, 0.0
-            ) - amount
+            account_totals[account_name] = (
+                account_totals.get(account_name, 0.0) - amount
+            )
             counterparty = _format_operation_account(tx.get("counterparty"))
             if counterparty != "Нужно уточнить":
-                account_totals[counterparty] = account_totals.get(
-                    counterparty, 0.0
-                ) + amount
+                account_totals[counterparty] = (
+                    account_totals.get(counterparty, 0.0) + amount
+                )
     account_lines = [
         f"— {name}: {_format_signed_amount(total)}"
         for name, total in account_totals.items()
@@ -615,9 +600,9 @@ def _build_draft_messages(payload: dict[str, Any]) -> list[str]:
             for idx, tx in enumerate(transactions, start=1):
                 category_name = (tx.get("category") or "").strip()
                 if category_name:
-                    category_operation_map.setdefault(
-                        category_name.lower(), []
-                    ).append(idx)
+                    category_operation_map.setdefault(category_name.lower(), []).append(
+                        idx
+                    )
             for item in missing_categories:
                 name = item.get("name") or "Без названия"
                 operations = category_operation_map.get(name.lower(), [])
@@ -668,9 +653,7 @@ def _build_draft_messages(payload: dict[str, Any]) -> list[str]:
         count = 0
         while count < remaining:
             end = index + count + 1
-            marker = _build_operations_marker(
-                index + 1, end, total_operations
-            )
+            marker = _build_operations_marker(index + 1, end, total_operations)
             message = _compose_message(
                 marker,
                 header,
@@ -697,9 +680,7 @@ def _build_draft_messages(payload: dict[str, Any]) -> list[str]:
     return messages
 
 
-async def _reply_split_text(
-    update: Update, text_or_messages: str | list[str]
-) -> None:
+async def _reply_split_text(update: Update, text_or_messages: str | list[str]) -> None:
     if isinstance(text_or_messages, list):
         messages = text_or_messages
     else:
@@ -708,16 +689,12 @@ async def _reply_split_text(
         await update.effective_message.reply_text(chunk)
 
 
-async def command_statement(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def command_statement(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(STATEMENT_COMMAND_TEXT)
     _set_state(context, STATE_WAITING_STATEMENT_FILE)
 
 
-async def handle_document(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if _get_state(context) != STATE_WAITING_STATEMENT_FILE:
         return
     document = update.message.document if update.message else None
@@ -765,6 +742,14 @@ async def handle_document(
                     if message:
                         await update.effective_message.reply_text(message)
                         return
+            if (
+                isinstance(exc, httpx.HTTPStatusError)
+                and exc.response.status_code == 503
+            ):
+                await update.effective_message.reply_text(
+                    "ИИ не ответил вовремя. Попробуйте ещё раз."
+                )
+                return
             await update.effective_message.reply_text(
                 f"Ошибка загрузки выписки: {_format_http_error(exc)}"
             )
@@ -791,6 +776,14 @@ async def handle_document(
                     if message:
                         await update.effective_message.reply_text(message)
                         return
+            if (
+                isinstance(exc, httpx.HTTPStatusError)
+                and exc.response.status_code == 503
+            ):
+                await update.effective_message.reply_text(
+                    "ИИ не ответил вовремя. Попробуйте ещё раз."
+                )
+                return
             await update.effective_message.reply_text(
                 f"Ошибка загрузки выписки: {_format_http_error(exc)}"
             )
@@ -813,15 +806,11 @@ async def _apply_statement_draft(
 ) -> None:
     draft_context = _get_draft_context(context)
     if not draft_context:
-        await update.effective_message.reply_text(
-            "Черновик не найден. Начните заново."
-        )
+        await update.effective_message.reply_text("Черновик не найден. Начните заново.")
         _set_state(context, None)
         return
     try:
-        response = await _request_statement_apply(
-            jwt_token, draft_context.draft_id
-        )
+        response = await _request_statement_apply(jwt_token, draft_context.draft_id)
     except httpx.HTTPError as exc:
         logger.exception("Statement apply failed")
         if isinstance(exc, httpx.HTTPStatusError):
@@ -849,9 +838,7 @@ async def _apply_statement_draft(
         await update.effective_message.reply_text(CONFIRM_SUCCESS_TEXT)
 
 
-async def handle_feedback(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     state = _get_state(context)
     if state not in (
         STATE_WAITING_STATEMENT_FEEDBACK,
@@ -860,16 +847,12 @@ async def handle_feedback(
         return
     draft_context = _get_draft_context(context)
     if not draft_context:
-        await update.effective_message.reply_text(
-            "Черновик не найден. Начните заново."
-        )
+        await update.effective_message.reply_text("Черновик не найден. Начните заново.")
         _set_state(context, None)
         return
     jwt_token = _get_jwt(context)
     if not jwt_token:
-        await update.effective_message.reply_text(
-            "Сессия истекла. Начните заново."
-        )
+        await update.effective_message.reply_text("Сессия истекла. Начните заново.")
         _set_state(context, None)
         return
     feedback = update.effective_message.text or ""
@@ -894,9 +877,7 @@ async def handle_feedback(
         if normalized in {"отмена", "cancel"}:
             _clear_draft_context(context)
             _set_state(context, None)
-            await update.effective_message.reply_text(
-                "Ок, отменил применение выписки."
-            )
+            await update.effective_message.reply_text("Ок, отменил применение выписки.")
             return
         _set_state(context, STATE_WAITING_STATEMENT_FEEDBACK)
     await update.effective_message.chat.send_action(ChatAction.TYPING)
