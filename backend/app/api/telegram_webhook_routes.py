@@ -11,7 +11,14 @@ logger = logging.getLogger(__name__)
 @router.post("/telegram/webhook")
 async def telegram_webhook(request: Request) -> dict[str, bool]:
     try:
-        telegram_application = request.app.state.telegram_application
+        telegram_application = getattr(
+            request.app.state,
+            "telegram_application",
+            None,
+        )
+        if not telegram_application:
+            logger.error("Telegram app not found in app.state")
+            return {"ok": True}
 
         data = await request.json()
 

@@ -71,7 +71,7 @@ def test_lifespan_sets_webhook_and_shutdown(monkeypatch):
     assert dummy_app.shutdown_called is True
 
 
-def test_lifespan_skips_without_token(monkeypatch):
+def test_lifespan_raises_without_token(monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
 
     async def _unexpected():
@@ -83,7 +83,24 @@ def test_lifespan_skips_without_token(monkeypatch):
         async with main.lifespan(FastAPI()):
             return
 
-    asyncio.run(_run_lifespan())
+    with pytest.raises(RuntimeError, match="TELEGRAM_BOT_TOKEN not set"):
+        asyncio.run(_run_lifespan())
+
+
+def test_telegram_webhook_handles_missing_telegram_app(monkeypatch, caplog):
+    monkeypatch.setenv("TELEGRAM_SECRET", "secret")
+
+    request = _DummyRequest(
+        headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
+        payload={"update_id": 123},
+        telegram_application=None,
+    )
+
+    with caplog.at_level("ERROR"):
+        result = asyncio.run(telegram_webhook_routes.telegram_webhook(request))
+
+    assert result == {"ok": True}
+    assert "Telegram app not found in app.state" in caplog.text
 
 
 def test_telegram_webhook_rejects_invalid_secret(monkeypatch):
