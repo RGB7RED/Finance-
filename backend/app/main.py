@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 import os
@@ -15,9 +16,8 @@ from app.api.routes import router
 from app.api.telegram_webhook_routes import router as telegram_webhook_router
 from app.core.config import get_telegram_bot_token, get_telegram_bot_token_source, settings
 from app.integrations.supabase_client import get_supabase_client
-from app.integrations.telegram_bot import init_telegram_application, telegram_application
+from app.integrations.telegram_bot import init_telegram_application
 
-app = FastAPI()
 logger = logging.getLogger(__name__)
 
 
@@ -30,15 +30,6 @@ def parse_cors_origins(value: str) -> list[str]:
 
 
 cors_origins = parse_cors_origins(settings.CORS_ORIGINS)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins if cors_origins != ["*"] else ["*"],
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
-    allow_credentials=False,
-)
-
 
 def _supabase_project_ref(url: str | None) -> str:
     if not url:
@@ -71,7 +62,7 @@ def _log_supabase_startup_checks() -> None:
         logger.exception("supabase_schema_check=error unexpected")
 
 
-@app.on_event("startup")
+
 def log_cors_settings() -> None:
     logger.info(
         "CORS origins configured: %s (raw CORS_ORIGINS=%s)",
@@ -90,27 +81,41 @@ def log_cors_settings() -> None:
     _log_supabase_startup_checks()
 
 
-@app.on_event("startup")
-async def start_telegram_bot() -> None:
-    if not os.getenv("TELEGRAM_BOT_TOKEN"):
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    log_cors_settings()
+
+    if os.getenv("TELEGRAM_BOT_TOKEN"):
+        telegram_app = await init_telegram_application()
+        app.state.telegram_application = telegram_app
+
+        webhook_url = os.environ["PUBLIC_BASE_URL"].rstrip("/") + "/telegram/webhook"
+
+        await telegram_app.bot.set_webhook(
+            webhook_url,
+            secret_token=os.environ.get("TELEGRAM_SECRET"),
+        )
+        logger.info("Webhook set to %s", webhook_url)
+    else:
         logger.info("telegram_bot_startup=skipped reason=token_missing")
-        return
 
-    app_instance = await init_telegram_application()
-    webhook_url = os.environ["PUBLIC_BASE_URL"].rstrip("/") + "/telegram/webhook"
+    yield
 
-    await app_instance.bot.set_webhook(
-        webhook_url,
-        secret_token=os.environ["TELEGRAM_SECRET"],
-    )
-    logger.info("Webhook set to %s", webhook_url)
-
-
-@app.on_event("shutdown")
-async def stop_telegram_bot() -> None:
-    if telegram_application:
-        await telegram_application.shutdown()
+    if hasattr(app.state, "telegram_application"):
+        await app.state.telegram_application.shutdown()
         logger.info("telegram_bot_shutdown=ok")
+
+
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins if cors_origins != ["*"] else ["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    allow_credentials=False,
+)
+
 
 
 @app.options("/{path:path}")

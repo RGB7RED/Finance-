@@ -4,8 +4,6 @@ import logging
 from fastapi import APIRouter, Request
 from telegram import Update
 
-from app.integrations import telegram_bot
-
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -13,19 +11,17 @@ logger = logging.getLogger(__name__)
 @router.post("/telegram/webhook")
 async def telegram_webhook(request: Request) -> dict[str, bool]:
     try:
-        if not telegram_bot.telegram_application:
-            logger.error("Telegram application not initialized")
-            return {"ok": True}
+        telegram_application = request.app.state.telegram_application
+
+        data = await request.json()
 
         secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
         if secret != os.environ.get("TELEGRAM_SECRET"):
-            logger.error("Invalid Telegram secret token")
             return {"ok": True}
 
-        data = await request.json()
-        update = Update.de_json(data, telegram_bot.telegram_application.bot)
+        update = Update.de_json(data, telegram_application.bot)
 
-        await telegram_bot.telegram_application.process_update(update)
+        await telegram_application.process_update(update)
 
         return {"ok": True}
     except Exception:
