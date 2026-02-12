@@ -2,7 +2,6 @@ import asyncio
 import os
 
 import pytest
-from fastapi import HTTPException
 
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
@@ -80,10 +79,9 @@ def test_telegram_webhook_rejects_invalid_secret(monkeypatch):
         headers={"X-Telegram-Bot-Api-Secret-Token": "bad"}, payload={}
     )
 
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(telegram_webhook_routes.telegram_webhook(request))
+    result = asyncio.run(telegram_webhook_routes.telegram_webhook(request))
 
-    assert exc.value.status_code == 403
+    assert result == {"ok": True}
 
 
 def test_telegram_webhook_processes_update(monkeypatch):
@@ -107,6 +105,35 @@ def test_telegram_webhook_processes_update(monkeypatch):
 
     assert result == {"ok": True}
     assert app.processed == [{"data": {"update_id": 123}, "bot": app.bot}]
+
+
+def test_telegram_webhook_handles_processing_failure(monkeypatch, caplog):
+    monkeypatch.setenv("TELEGRAM_SECRET", "secret")
+
+    class _FailingTelegramApp(_DummyTelegramApp):
+        async def process_update(self, update):
+            raise RuntimeError("boom")
+
+    app = _FailingTelegramApp()
+    telegram_bot.telegram_application = app
+
+    class _Update:
+        @staticmethod
+        def de_json(data, bot):
+            return {"data": data, "bot": bot}
+
+    monkeypatch.setattr(telegram_webhook_routes, "Update", _Update)
+
+    request = _DummyRequest(
+        headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
+        payload={"update_id": 123},
+    )
+
+    with caplog.at_level("ERROR"):
+        result = asyncio.run(telegram_webhook_routes.telegram_webhook(request))
+
+    assert result == {"ok": True}
+    assert "Telegram webhook processing failed" in caplog.text
 
 
 def test_init_telegram_application_builds_once(monkeypatch):
