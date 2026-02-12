@@ -1,7 +1,9 @@
 import asyncio
 import os
+from types import SimpleNamespace
 
 import pytest
+from fastapi import FastAPI
 
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
@@ -35,48 +37,62 @@ class _DummyTelegramApp:
 
 
 class _DummyRequest:
-    def __init__(self, headers, payload):
+    def __init__(self, headers, payload, telegram_application):
         self.headers = headers
         self._payload = payload
+        self.app = SimpleNamespace(state=SimpleNamespace(telegram_application=telegram_application))
 
     async def json(self):
         return self._payload
 
 
-def test_start_telegram_bot_sets_webhook(monkeypatch):
+def test_lifespan_sets_webhook_and_shutdown(monkeypatch):
     dummy_app = _DummyTelegramApp()
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.up.railway.app")
     monkeypatch.setenv("TELEGRAM_SECRET", "secret")
+
     async def _init_app():
         return dummy_app
 
     monkeypatch.setattr(main, "init_telegram_application", _init_app)
 
-    asyncio.run(main.start_telegram_bot())
+    async def _run_lifespan():
+        test_app = FastAPI()
+        async with main.lifespan(test_app):
+            assert test_app.state.telegram_application is dummy_app
+
+    asyncio.run(_run_lifespan())
 
     assert dummy_app.bot.webhook_calls == [
         ("https://example.up.railway.app/telegram/webhook", "secret")
     ]
+    assert dummy_app.shutdown_called is True
 
 
-def test_start_telegram_bot_skips_without_token(monkeypatch):
+def test_lifespan_skips_without_token(monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+
     async def _unexpected():
         pytest.fail("init_telegram_application should not be called")
 
     monkeypatch.setattr(main, "init_telegram_application", _unexpected)
 
-    asyncio.run(main.start_telegram_bot())
+    async def _run_lifespan():
+        async with main.lifespan(FastAPI()):
+            return
+
+    asyncio.run(_run_lifespan())
 
 
 def test_telegram_webhook_rejects_invalid_secret(monkeypatch):
     monkeypatch.setenv("TELEGRAM_SECRET", "secret")
-    telegram_bot.telegram_application = _DummyTelegramApp()
 
     request = _DummyRequest(
-        headers={"X-Telegram-Bot-Api-Secret-Token": "bad"}, payload={}
+        headers={"X-Telegram-Bot-Api-Secret-Token": "bad"},
+        payload={},
+        telegram_application=_DummyTelegramApp(),
     )
 
     result = asyncio.run(telegram_webhook_routes.telegram_webhook(request))
@@ -87,7 +103,6 @@ def test_telegram_webhook_rejects_invalid_secret(monkeypatch):
 def test_telegram_webhook_processes_update(monkeypatch):
     monkeypatch.setenv("TELEGRAM_SECRET", "secret")
     app = _DummyTelegramApp()
-    telegram_bot.telegram_application = app
 
     class _Update:
         @staticmethod
@@ -99,6 +114,7 @@ def test_telegram_webhook_processes_update(monkeypatch):
     request = _DummyRequest(
         headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
         payload={"update_id": 123},
+        telegram_application=app,
     )
 
     result = asyncio.run(telegram_webhook_routes.telegram_webhook(request))
@@ -115,7 +131,6 @@ def test_telegram_webhook_handles_processing_failure(monkeypatch, caplog):
             raise RuntimeError("boom")
 
     app = _FailingTelegramApp()
-    telegram_bot.telegram_application = app
 
     class _Update:
         @staticmethod
@@ -127,6 +142,7 @@ def test_telegram_webhook_handles_processing_failure(monkeypatch, caplog):
     request = _DummyRequest(
         headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
         payload={"update_id": 123},
+        telegram_application=app,
     )
 
     with caplog.at_level("ERROR"):
@@ -136,23 +152,28 @@ def test_telegram_webhook_handles_processing_failure(monkeypatch, caplog):
     assert "Telegram webhook processing failed" in caplog.text
 
 
-def test_init_telegram_application_builds_once(monkeypatch):
-    dummy_app = _DummyTelegramApp()
+def test_init_telegram_application_builds_every_time(monkeypatch):
     calls = []
 
-    async def _initialize():
-        calls.append("initialize")
-
-    dummy_app.initialize = _initialize
+    class _InitDummyTelegramApp(_DummyTelegramApp):
+        async def initialize(self):
+            calls.append("initialize")
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
-    monkeypatch.setattr(telegram_bot, "telegram_application", None)
-    monkeypatch.setattr(telegram_bot, "build_application", lambda _token: dummy_app)
-    monkeypatch.setattr(telegram_bot, "register_handlers", lambda _app: calls.append("handlers"))
+
+    def _build_application(_token):
+        calls.append("build")
+        return _InitDummyTelegramApp()
+
+    monkeypatch.setattr(telegram_bot, "build_application", _build_application)
+    monkeypatch.setattr(
+        telegram_bot,
+        "register_handlers",
+        lambda _app: calls.append("handlers"),
+    )
 
     app_one = asyncio.run(telegram_bot.init_telegram_application())
     app_two = asyncio.run(telegram_bot.init_telegram_application())
 
-    assert app_one is dummy_app
-    assert app_two is dummy_app
-    assert calls == ["handlers", "initialize"]
+    assert app_one is not app_two
+    assert calls == ["build", "handlers", "initialize", "build", "handlers", "initialize"]

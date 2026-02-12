@@ -23,8 +23,6 @@ from app.core.config import get_telegram_bot_token, settings
 
 logger = logging.getLogger(__name__)
 
-telegram_application: Application | None = None
-
 MAX_TELEGRAM_MESSAGE_LEN = 3800
 
 STATE_WAITING_STATEMENT_FILE = "WAITING_STATEMENT_FILE"
@@ -91,15 +89,10 @@ def build_application(token: str) -> Application:
 
 
 async def init_telegram_application() -> Application:
-    global telegram_application
-
-    if telegram_application:
-        return telegram_application
-
-    telegram_application = build_application(os.environ["TELEGRAM_BOT_TOKEN"])
-    register_handlers(telegram_application)
-    await telegram_application.initialize()
-    return telegram_application
+    application = build_application(os.environ["TELEGRAM_BOT_TOKEN"])
+    register_handlers(application)
+    await application.initialize()
+    return application
 
 
 def _get_jwt(context: ContextTypes.DEFAULT_TYPE) -> str | None:
