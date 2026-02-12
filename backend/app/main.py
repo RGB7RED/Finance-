@@ -85,19 +85,22 @@ def log_cors_settings() -> None:
 async def lifespan(app: FastAPI):
     log_cors_settings()
 
-    if os.getenv("TELEGRAM_BOT_TOKEN"):
-        telegram_app = await init_telegram_application()
-        app.state.telegram_application = telegram_app
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
 
-        webhook_url = os.environ["PUBLIC_BASE_URL"].rstrip("/") + "/telegram/webhook"
+    print("Initializing Telegram application...")
+    telegram_app = await init_telegram_application()
+    app.state.telegram_application = telegram_app
 
-        await telegram_app.bot.set_webhook(
-            webhook_url,
-            secret_token=os.environ.get("TELEGRAM_SECRET"),
-        )
-        logger.info("Webhook set to %s", webhook_url)
-    else:
-        logger.info("telegram_bot_startup=skipped reason=token_missing")
+    webhook_url = os.environ["PUBLIC_BASE_URL"].rstrip("/") + "/telegram/webhook"
+
+    await telegram_app.bot.set_webhook(
+        webhook_url,
+        secret_token=os.environ.get("TELEGRAM_SECRET"),
+    )
+    logger.info("Webhook set to %s", webhook_url)
+    print("Telegram application initialized")
 
     yield
 
@@ -106,7 +109,10 @@ async def lifespan(app: FastAPI):
         logger.info("telegram_bot_shutdown=ok")
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    title="Finance API",
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
