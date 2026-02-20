@@ -698,12 +698,21 @@ async def _reply_split_text(update: Update, text_or_messages: str | list[str]) -
 
 
 async def command_statement(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info(
+        "command_statement invoked: chat_id=%s user_id=%s",
+        update.effective_chat.id if update.effective_chat else None,
+        update.effective_user.id if update.effective_user else None,
+    )
     await update.effective_message.reply_text(STATEMENT_COMMAND_TEXT)
     _set_state(context, STATE_WAITING_STATEMENT_FILE)
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if _get_state(context) != STATE_WAITING_STATEMENT_FILE:
+        logger.info(
+            "handle_document ignored: unexpected_state=%s",
+            _get_state(context),
+        )
         return
     document = update.message.document if update.message else None
     if not document or not (
