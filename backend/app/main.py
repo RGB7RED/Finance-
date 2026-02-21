@@ -84,28 +84,36 @@ def log_cors_settings() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log_cors_settings()
+    telegram_app = None
 
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    if not token:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
+    token = get_telegram_bot_token()
+    if settings.ENABLE_TELEGRAM_BOT and token:
+        try:
+            logger.info("Initializing Telegram application")
+            telegram_app = await init_telegram_application()
+            app.state.telegram_application = telegram_app
 
-    print("Initializing Telegram application...")
-    telegram_app = await init_telegram_application()
-    app.state.telegram_application = telegram_app
-
-    webhook_url = os.environ["PUBLIC_BASE_URL"].rstrip("/") + "/telegram/webhook"
-
-    await telegram_app.bot.set_webhook(
-        webhook_url,
-        secret_token=os.environ.get("TELEGRAM_SECRET"),
-    )
-    logger.info("Webhook set to %s", webhook_url)
-    print("Telegram application initialized")
+            webhook_url = os.environ["PUBLIC_BASE_URL"].rstrip("/") + "/telegram/webhook"
+            await telegram_app.bot.set_webhook(
+                webhook_url,
+                secret_token=os.environ.get("TELEGRAM_SECRET"),
+            )
+            logger.info("Webhook set to %s", webhook_url)
+            logger.info("Telegram application initialized")
+        except Exception:
+            logger.exception("Failed to start Telegram bot")
+            telegram_app = None
+            if hasattr(app.state, "telegram_application"):
+                delattr(app.state, "telegram_application")
+    elif not settings.ENABLE_TELEGRAM_BOT:
+        logger.warning("ENABLE_TELEGRAM_BOT=false. Telegram bot disabled.")
+    else:
+        logger.warning("TELEGRAM_BOT_TOKEN not set. Telegram bot disabled.")
 
     yield
 
-    if hasattr(app.state, "telegram_application"):
-        await app.state.telegram_application.shutdown()
+    if telegram_app:
+        await telegram_app.shutdown()
         logger.info("telegram_bot_shutdown=ok")
 
 
