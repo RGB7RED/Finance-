@@ -24,6 +24,7 @@ import {
   type CashflowDay,
   type Category,
   type DailyState,
+  type DailyStateAccount,
   type ExpensesByCategoryReport,
   type Goal,
   type MonthReport,
@@ -255,6 +256,7 @@ export default function HomePage() {
   const [monthReport, setMonthReport] = useState<MonthReport | null>(null);
   const [incomeAccountId, setIncomeAccountId] = useState("");
   const [incomeAmount, setIncomeAmount] = useState("");
+  const [incomeCategoryId, setIncomeCategoryId] = useState("");
   const [incomeTag, setIncomeTag] = useState<"one_time" | "subscription">(
     "one_time",
   );
@@ -1173,6 +1175,7 @@ export default function HomePage() {
       if (tx.type === "income") {
         setIncomeAccountId(tx.account_id ?? "");
         setIncomeAmount(String(tx.amount));
+        setIncomeCategoryId(tx.category_id ?? "");
         setIncomeTag(tx.tag);
         setIncomeNote(tx.note ?? "");
         return;
@@ -1205,6 +1208,7 @@ export default function HomePage() {
       setExpenseTag,
       setIncomeAccountId,
       setIncomeAmount,
+      setIncomeCategoryId,
       setIncomeNote,
       setIncomeTag,
       setOpsDate,
@@ -1230,6 +1234,10 @@ export default function HomePage() {
       setMessage("Сумма должна быть больше нуля");
       return;
     }
+    if (!incomeCategoryId) {
+      setMessage("Выберите категорию дохода");
+      return;
+    }
     setMessage("");
     setIncomeErrorDetails(null);
     const transactionDate = opsDate || selectedDate;
@@ -1249,11 +1257,13 @@ export default function HomePage() {
         amount,
         date: transactionDate,
         account_id: incomeAccountId,
+        category_id: incomeCategoryId,
         tag: incomeTag,
         note: incomeNote ? incomeNote : null,
       });
       rememberLastAccount(incomeAccountId);
       setIncomeAmount("");
+      setIncomeCategoryId("");
       setIncomeNote("");
       clearEditingTransaction();
       const updatedTransactions = await listTransactions(
@@ -1757,6 +1767,7 @@ export default function HomePage() {
                 transactions={transactions}
                 goals={goals}
                 categories={categories}
+                dailyStateAccounts={dailyState?.accounts ?? []}
                 accountMap={accountMap}
                 onDeleteTransaction={handleDeleteTransaction}
                 onEditTransaction={handleEditTransaction}
@@ -1773,6 +1784,8 @@ export default function HomePage() {
                 onIncomeAmountChange={setIncomeAmount}
                 incomeTag={incomeTag}
                 onIncomeTagChange={setIncomeTag}
+                incomeCategoryId={incomeCategoryId}
+                onIncomeCategoryChange={setIncomeCategoryId}
                 incomeNote={incomeNote}
                 onIncomeNoteChange={setIncomeNote}
                 onCreateIncome={handleCreateIncome}
@@ -2274,6 +2287,7 @@ type DayTabProps = {
   transactions: Transaction[];
   goals: Goal[];
   categories: Category[];
+  dailyStateAccounts: DailyStateAccount[];
   accountMap: Map<string, Account>;
   onDeleteTransaction: (txId: string) => void;
   onEditTransaction: (tx: Transaction) => void;
@@ -2303,6 +2317,7 @@ const DayTab = ({
   transactions,
   goals,
   categories,
+  dailyStateAccounts,
   accountMap,
   onDeleteTransaction,
   onEditTransaction,
@@ -2385,101 +2400,6 @@ const DayTab = ({
       </Card>
     </div>
 
-    <Card
-      title="Сверка"
-      right={
-        hasAccounts ? (
-          <Pill
-            variant={
-              reconcileDiffAbs <= 1
-                ? "ok"
-                : reconcileDiffAbs <= 100
-                  ? "warn"
-                  : "err"
-            }
-            text={
-              reconcileDiffAbs <= 1
-                ? "OK"
-                : `Δ ${formatRub(reconcileDiffAbs)}`
-            }
-          />
-        ) : null
-      }
-    >
-      {!hasAccounts ? (
-        <p>Сначала добавьте хотя бы один счёт.</p>
-      ) : (
-        <div className="mf-stack">
-          <table className="mf-table">
-            <thead>
-              <tr>
-                <th>Верхний итог</th>
-                <th>Нижний итог</th>
-                <th>Разница</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>{formatRub(topDayTotal)}</td>
-                <td>{formatRub(bottomDayTotal)}</td>
-                <td>{formatRub(reconcileDiff)}</td>
-              </tr>
-            </tbody>
-          </table>
-          {reconcileDiff !== 0 && (
-            <div className="mf-stack">
-              <div className="mf-row" style={{ alignItems: "flex-end" }}>
-                <label className="mf-input">
-                  <span className="mf-input__label">Счет для корректировки</span>
-                  <select
-                    className="mf-select"
-                    value={reconcileAccountId}
-                    onChange={(event) =>
-                      onReconcileAccountChange(event.target.value)
-                    }
-                  >
-                    <option value="">Выберите счет</option>
-                    {accounts.map((account) => (
-                      <option
-                        key={account.id}
-                        value={account.id}
-                        disabled={
-                          reconcileDelta < 0 &&
-                          !reconcileEligibleAccountIds.has(account.id)
-                        }
-                      >
-                        {account.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <Button
-                  onClick={onReconcileAdjust}
-                  disabled={!reconcileCanAdjust}
-                >
-                  Исправить сверку
-                </Button>
-              </div>
-              {reconcileHint && <p className="mf-muted">{reconcileHint}</p>}
-              {reconcileErrorDetails && (
-                <div className="mf-stack">
-                  {reconcileErrorDetail && <p>{reconcileErrorDetail}</p>}
-                  <p>
-                    http_status:{" "}
-                    {reconcileErrorDetails.httpStatus ?? "unknown"}
-                  </p>
-                  <p>
-                    response_text:{" "}
-                    {reconcileErrorDetails.responseText ?? "unknown"}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </Card>
-
     <Card title="Операции за день">
       <TransactionsGroupList
         transactions={transactions}
@@ -2490,6 +2410,118 @@ const DayTab = ({
         onEditTransaction={onEditTransaction}
       />
     </Card>
+
+    <Card title="Счета">
+      {accounts.length ? (
+        <table className="mf-table">
+          <thead>
+            <tr>
+              <th>Название</th>
+              <th>Тип</th>
+              <th>Текущий остаток</th>
+              <th>Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            {accounts.map((account) => {
+              const currentBalance =
+                dailyStateAccounts.find(
+                  (dayAccount) => dayAccount.account_id === account.id,
+                )?.amount ?? 0;
+              return (
+                <tr key={account.id}>
+                  <td>{account.name}</td>
+                  <td>{account.kind}</td>
+                  <td>{formatRub(currentBalance)}</td>
+                  <td>✏️ 🗑</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      ) : (
+        <p>Счета не добавлены</p>
+      )}
+      <Button variant="secondary">➕ Создать счет</Button>
+    </Card>
+
+    <Card title="Цели">
+      {goals.length ? (
+        <table className="mf-table">
+          <thead>
+            <tr><th>Цель</th><th>Прогресс</th><th>Действия</th></tr>
+          </thead>
+          <tbody>
+            {goals.map((goal) => (
+              <tr key={goal.id}>
+                <td>{goal.title}</td>
+                <td>{goal.current_amount} / {goal.target_amount} ₽</td>
+                <td>✏️ 🗑</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : <p>Нет целей</p>}
+      <Button variant="secondary">➕ Создать цель</Button>
+    </Card>
+
+    <Card title="Категории">
+      {categories.length ? (
+        <table className="mf-table">
+          <thead>
+            <tr><th>Категория</th><th>Доходы</th><th>Расходы</th><th>Действия</th></tr>
+          </thead>
+          <tbody>
+            {categories.map((category) => {
+              const totalIncome = transactions
+                .filter((tx) => tx.category_id === category.id && tx.type === "income")
+                .reduce((sum, tx) => sum + tx.amount, 0);
+              const totalExpense = transactions
+                .filter((tx) => tx.category_id === category.id && tx.type === "expense")
+                .reduce((sum, tx) => sum + tx.amount, 0);
+              return (
+                <tr key={category.id}>
+                  <td>{category.name}</td>
+                  <td>{formatRub(totalIncome)}</td>
+                  <td>{formatRub(totalExpense)}</td>
+                  <td>✏️ 🗑</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      ) : <p>Категории не добавлены</p>}
+      <Button variant="secondary">➕ Создать категорию</Button>
+    </Card>
+
+    <Card title="Долги (детально)">
+      {transactions.filter((tx) => tx.kind === "debt").length ? (
+        <table className="mf-table">
+          <thead>
+            <tr><th>Кому должен</th><th>Сумма</th><th>Тип</th><th>Действия</th></tr>
+          </thead>
+          <tbody>
+            {transactions.filter((tx) => tx.kind === "debt").map((tx) => {
+              const metadata = parseDebtMetadata(tx.note);
+              const typeLabel = metadata?.debt_type === "cards" ? "кредитка" : "человек";
+              return (
+                <tr key={tx.id}>
+                  <td>{tx.note ?? "—"}</td>
+                  <td>{formatRub(tx.amount)}</td>
+                  <td>{typeLabel}</td>
+                  <td>
+                    <button type="button" className="mf-icon-btn" onClick={() => onEditTransaction(tx)}>✏️</button>
+                    <button type="button" className="mf-icon-btn" onClick={() => onDeleteTransaction(tx.id)}>🗑</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      ) : <p>Долгов нет</p>}
+      <Button variant="secondary">➕ Создать долг</Button>
+    </Card>
+
   </div>
 );
 
@@ -2503,6 +2535,8 @@ type OpsTabProps = {
   onIncomeAmountChange: (value: string) => void;
   incomeTag: "one_time" | "subscription";
   onIncomeTagChange: (value: "one_time" | "subscription") => void;
+  incomeCategoryId: string;
+  onIncomeCategoryChange: (value: string) => void;
   incomeNote: string;
   onIncomeNoteChange: (value: string) => void;
   onCreateIncome: (event: FormEvent<HTMLFormElement>) => void;
@@ -2565,6 +2599,8 @@ const OpsTab = ({
   onIncomeAmountChange,
   incomeTag,
   onIncomeTagChange,
+  incomeCategoryId,
+  onIncomeCategoryChange,
   incomeNote,
   onIncomeNoteChange,
   onCreateIncome,
@@ -2627,7 +2663,7 @@ const OpsTab = ({
         </div>
       </Card>
     )}
-    <Card title="Добавить доход">
+    <Card title="Создать · Доход">
       {!hasAccounts && (
         <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
       )}
@@ -2661,6 +2697,23 @@ const OpsTab = ({
           required
           disabled={!hasAccounts}
         />
+        <label className="mf-input">
+          <span className="mf-input__label">Категория</span>
+          <select
+            className="mf-select"
+            value={incomeCategoryId}
+            onChange={(event) => onIncomeCategoryChange(event.target.value)}
+            required
+            disabled={!hasAccounts}
+          >
+            <option value="">Выберите категорию</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="mf-input">
           <span className="mf-input__label">Тег</span>
           <select
@@ -2698,7 +2751,7 @@ const OpsTab = ({
       )}
     </Card>
 
-    <Card title="Добавить расход">
+    <Card title="Создать · Расход">
       {!hasAccounts && (
         <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
       )}
@@ -2785,7 +2838,7 @@ const OpsTab = ({
       )}
     </Card>
 
-    <Card title="Перевод между счетами">
+    <Card title="Создать · Перевод">
       {!hasAccounts && (
         <p>Создайте хотя бы один счёт, чтобы делать переводы.</p>
       )}
@@ -2857,95 +2910,8 @@ const OpsTab = ({
       )}
     </Card>
 
-    <Card title="Долг другому человеку / по карте">
-      {!hasAccounts && (
-        <p>Создайте хотя бы один счёт, чтобы добавлять долги.</p>
-      )}
-      <form className="mf-stack" onSubmit={onCreateDebtOther}>
-        <OperationDateRow
-          dateValue={opsDate}
-          onDateChange={onOpsDateChange}
-        />
-        <Input
-          label="Сумма"
-          type="number"
-          value={debtOtherAmount}
-          onChange={(event) => onDebtOtherAmountChange(event.target.value)}
-          required
-          disabled={!hasAccounts}
-        />
-        <label className="mf-input">
-          <span className="mf-input__label">Направление</span>
-          <select
-            className="mf-select"
-            value={debtOtherDirection}
-            onChange={(event) =>
-              onDebtOtherDirectionChange(
-                event.target.value as "borrowed" | "repaid",
-              )
-            }
-            disabled={!hasAccounts}
-          >
-            <option value="borrowed">Взял в долг</option>
-            <option value="repaid">Вернул</option>
-          </select>
-        </label>
-        <label className="mf-input">
-          <span className="mf-input__label">Тип</span>
-          <select
-            className="mf-select"
-            value={debtOtherType}
-            onChange={(event) =>
-              onDebtOtherTypeChange(event.target.value as "people" | "cards")
-            }
-            disabled={!hasAccounts}
-          >
-            <option value="people">Людям</option>
-            <option value="cards">Кредитки</option>
-          </select>
-        </label>
-        <label className="mf-input">
-          <span className="mf-input__label">Счет</span>
-          <select
-            className="mf-select"
-            value={debtOtherAccountId}
-            onChange={(event) => onDebtOtherAccountChange(event.target.value)}
-            required
-            disabled={!hasAccounts}
-          >
-            <option value="">Выберите счет</option>
-            {accounts.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <Input
-          label="Комментарий"
-          type="text"
-          value={debtOtherNote}
-          onChange={(event) => onDebtOtherNoteChange(event.target.value)}
-          disabled={!hasAccounts}
-        />
-        <Button type="submit" disabled={!hasAccounts}>
-          Добавить
-        </Button>
-      </form>
-      {debtOtherErrorDetails && (
-        <div>
-          <p>
-            debt_http_status: {debtOtherErrorDetails.httpStatus ?? "unknown"}
-          </p>
-          <p>
-            debt_response_text: {debtOtherErrorDetails.responseText ?? "unknown"}
-          </p>
-        </div>
-      )}
-    </Card>
-
     <TransactionsCard
-      title="Операции за день"
+      title="Изменить · История операций"
       selectedDate={selectedDate}
       onSelectedDateChange={onSelectedDateChange}
       transactions={transactions}
@@ -3191,70 +3157,6 @@ const ReportsTab = ({
             <p>Нет данных</p>
           )}
         </Card>
-        <Card title="Расходы по категориям">
-          <label className="mf-input">
-            <span className="mf-input__label">Top N</span>
-            <select
-              className="mf-select"
-              value={reportExpensesLimit}
-              onChange={onReportExpensesLimitChange}
-            >
-              <option value={5}>5</option>
-              <option value={10}>10</option>
-              <option value={20}>20</option>
-            </select>
-          </label>
-          {reportExpensesByCategory?.items?.length ? (
-            <table className="mf-table">
-              <thead>
-                <tr>
-                  <th>Категория</th>
-                  <th>Сумма</th>
-                  <th>Доля %</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reportExpensesByCategory.items.map((item) => {
-                  const isExpanded =
-                    expandedReportCategories[item.category_id];
-                  return (
-                    <Fragment key={item.category_id}>
-                      <tr>
-                        <td>
-                          {item.children.length ? (
-                            <Button
-                              variant="secondary"
-                              className="mf-button--small"
-                              onClick={() =>
-                                onToggleReportCategory(item.category_id)
-                              }
-                            >
-                              {isExpanded ? "Свернуть" : "Развернуть"}
-                            </Button>
-                          ) : null}{" "}
-                          {item.category_name}
-                        </td>
-                        <td>{item.amount} ₽</td>
-                        <td>{(item.share * 100).toFixed(1)}%</td>
-                      </tr>
-                      {isExpanded
-                        ? item.children.map((child) => (
-                            <tr key={child.category_id}>
-                              <td>— {child.category_name}</td>
-                              <td>{child.amount} ₽</td>
-                              <td>{(child.share * 100).toFixed(1)}%</td>
-                            </tr>
-                          ))
-                        : null}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          ) : (
-            <p>Нет данных</p>
-          )}
-        </Card>
         <Card title="Долги сейчас">
           <p>
             Кредитки/рассрочки: {reportSummary?.debt_cards_total ?? 0} ₽
@@ -3401,12 +3303,6 @@ type SettingsTabProps = {
 };
 
 const SettingsTab = ({
-  budgets,
-  activeBudgetId,
-  onBudgetChange,
-  accounts,
-  categories,
-  renderCategoryTree,
   rules,
   getAccountLabel,
   getCategoryLabel,
@@ -3421,85 +3317,10 @@ const SettingsTab = ({
   onRuleCategoryChange,
   ruleTag,
   onRuleTagChange,
-  goals,
-  normalizeGoalRemaining,
-  getGoalStrategy,
-  onGoalAdjust,
-  onGoalClose,
-  onGoalArchive,
-  onDeleteGoal,
-  onCreateGoal,
-  goalTitle,
-  onGoalTitleChange,
-  goalTargetAmount,
-  onGoalTargetAmountChange,
-  goalDeadline,
-  onGoalDeadlineChange,
-  onCreateAccount,
-  accountName,
-  onAccountNameChange,
-  accountActiveFrom,
-  onAccountActiveFromChange,
-  accountInitialAmount,
-  onAccountInitialAmountChange,
-  accountKind,
-  onAccountKindChange,
-  accountErrorDetails,
-  onCreateCategory,
-  categoryName,
-  onCategoryNameChange,
-  categoryParent,
-  onCategoryParentChange,
-  categoryErrorDetails,
-  onResetBudget,
-  onLogout,
+  accounts,
+  categories,
 }: SettingsTabProps) => (
   <div className="mf-stack">
-    <Card title="Бюджеты">
-      <label className="mf-input">
-        <span className="mf-input__label">Активный бюджет</span>
-        <select
-          className="mf-select"
-          value={activeBudgetId ?? ""}
-          onChange={onBudgetChange}
-        >
-          {budgets.map((budget) => (
-            <option key={budget.id} value={budget.id}>
-              {budget.name} ({budget.type})
-            </option>
-          ))}
-        </select>
-      </label>
-    </Card>
-
-    <Card title="Счета">
-      {accounts.length ? (
-        <ul className="mf-list">
-          {accounts.map((account) => (
-            <li key={account.id}>
-              {account.name} ({account.kind})
-              {account.active_from && (
-                <span className="mf-muted">
-                  {" "}
-                  — активен с {account.active_from}
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p>Счета не добавлены</p>
-      )}
-    </Card>
-
-    <Card title="Дерево категорий">
-      {categories.length ? (
-        <div className="mf-scroll">{renderCategoryTree(null)}</div>
-      ) : (
-        <p>Категории не добавлены</p>
-      )}
-    </Card>
-
     <Card title="Правила автокатегоризации">
       {rules.length ? (
         <table className="mf-table">
@@ -3590,217 +3411,6 @@ const SettingsTab = ({
         </label>
         <Button type="submit">Добавить правило</Button>
       </form>
-    </Card>
-
-    <Card title="Цели">
-      {goals.length ? (
-        <ul className="mf-list">
-          {goals.map((goal) => {
-            const remaining = normalizeGoalRemaining(goal);
-            const progress = Math.round(
-              (goal.current_amount / goal.target_amount) * 100,
-            );
-            const strategy = getGoalStrategy(goal);
-            const isActive = goal.status === "active";
-            const canWithdraw500 = goal.current_amount >= 500;
-            const canWithdraw1000 = goal.current_amount >= 1000;
-            return (
-              <li key={goal.id}>
-                <div>
-                  <strong>{goal.title}</strong> ({goal.status}) —{" "}
-                  {goal.current_amount} / {goal.target_amount} ₽
-                </div>
-                <div>
-                  <span>Осталось: {remaining} ₽</span>
-                  {goal.deadline && <span> · Дедлайн: {goal.deadline}</span>}
-                </div>
-                <div>
-                  <span>Прогресс: {progress}%</span>
-                  {strategy && (
-                    <span>
-                      {" "}
-                      · Нужно {strategy.perDay} ₽/день или {strategy.perWeek} ₽
-                      /неделю
-                    </span>
-                  )}
-                </div>
-                <div className="mf-row">
-                  <Button
-                    variant="secondary"
-                    className="mf-button--small"
-                    onClick={() => onGoalAdjust(goal.id, 500)}
-                    disabled={!isActive}
-                  >
-                    +500
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    className="mf-button--small"
-                    onClick={() => onGoalAdjust(goal.id, 1000)}
-                    disabled={!isActive}
-                  >
-                    +1000
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    className="mf-button--small"
-                    onClick={() => onGoalAdjust(goal.id, -500)}
-                    disabled={!isActive || !canWithdraw500}
-                  >
-                    -500
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    className="mf-button--small"
-                    onClick={() => onGoalAdjust(goal.id, -1000)}
-                    disabled={!isActive || !canWithdraw1000}
-                  >
-                    -1000
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    className="mf-button--small"
-                    onClick={() => onGoalClose(goal.id)}
-                    disabled={!isActive}
-                  >
-                    Закрыть
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    className="mf-button--small"
-                    onClick={() => onGoalArchive(goal.id)}
-                    disabled={goal.status === "archived"}
-                  >
-                    Архивировать
-                  </Button>
-                  <Button
-                    variant="danger"
-                    className="mf-button--small"
-                    onClick={() => onDeleteGoal(goal.id)}
-                  >
-                    Удалить
-                  </Button>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      ) : (
-        <p>Нет целей</p>
-      )}
-      <form className="mf-stack" onSubmit={onCreateGoal}>
-        <Input
-          label="Цель"
-          type="text"
-          value={goalTitle}
-          onChange={(event) => onGoalTitleChange(event.target.value)}
-          required
-        />
-        <Input
-          label="Сумма"
-          type="number"
-          value={goalTargetAmount}
-          onChange={(event) => onGoalTargetAmountChange(event.target.value)}
-          required
-        />
-        <Input
-          label="Дедлайн"
-          type="date"
-          value={goalDeadline}
-          onChange={(event) => onGoalDeadlineChange(event.target.value)}
-        />
-        <Button type="submit">Создать цель</Button>
-      </form>
-    </Card>
-
-    <Card title="Добавить счёт">
-      <form className="mf-stack" onSubmit={onCreateAccount}>
-        <Input
-          label="Название"
-          type="text"
-          value={accountName}
-          onChange={(event) => onAccountNameChange(event.target.value)}
-          required
-        />
-        <Input
-          label="Активен с даты"
-          type="date"
-          value={accountActiveFrom}
-          onChange={(event) => onAccountActiveFromChange(event.target.value)}
-          required
-        />
-        <Input
-          label="Начальный остаток"
-          type="number"
-          value={accountInitialAmount}
-          onChange={(event) => onAccountInitialAmountChange(event.target.value)}
-          min={0}
-          required
-        />
-        <label className="mf-input">
-          <span className="mf-input__label">Тип</span>
-          <select
-            className="mf-select"
-            value={accountKind}
-            onChange={(event) => onAccountKindChange(event.target.value)}
-          >
-            <option value="cash">Наличные</option>
-            <option value="bank">Банк</option>
-          </select>
-        </label>
-        <Button type="submit">Добавить</Button>
-      </form>
-      {accountErrorDetails && (
-        <div>
-          <p>http_status: {accountErrorDetails.httpStatus ?? "unknown"}</p>
-          <p>response_text: {accountErrorDetails.responseText ?? "unknown"}</p>
-        </div>
-      )}
-    </Card>
-
-    <Card title="Добавить категорию">
-      <form className="mf-stack" onSubmit={onCreateCategory}>
-        <Input
-          label="Название"
-          type="text"
-          value={categoryName}
-          onChange={(event) => onCategoryNameChange(event.target.value)}
-          required
-        />
-        <label className="mf-input">
-          <span className="mf-input__label">Родитель</span>
-          <select
-            className="mf-select"
-            value={categoryParent}
-            onChange={(event) => onCategoryParentChange(event.target.value)}
-          >
-            <option value="">None</option>
-            {categories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <Button type="submit">Добавить</Button>
-      </form>
-      {categoryErrorDetails && (
-        <div>
-          <p>http_status: {categoryErrorDetails.httpStatus ?? "unknown"}</p>
-          <p>response_text: {categoryErrorDetails.responseText ?? "unknown"}</p>
-        </div>
-      )}
-    </Card>
-
-    <Card title="Техническое меню">
-      <div className="mf-row">
-        <Button variant="danger" onClick={onResetBudget}>
-          Обнулить всё
-        </Button>
-        <Button variant="secondary" onClick={onLogout}>
-          Logout
-        </Button>
-      </div>
     </Card>
   </div>
 );
