@@ -64,7 +64,7 @@ import {
   listGoals,
   listRules,
   listTransactions,
-  resetBudget,
+  resetAll,
   updateGoal,
 } from "../src/lib/api";
 import { clearToken, getToken, setToken } from "../src/lib/auth";
@@ -1649,19 +1649,19 @@ export default function HomePage() {
     }
   };
 
-  const handleResetBudget = async () => {
+  const handleResetAll = async () => {
     if (!token || !activeBudgetId) {
       return;
     }
     const confirmed = window.confirm(
-      "Обнулить все данные текущего бюджета?",
+      "Обнулить все данные? Операции, долги, цели, счета и категории будут удалены.",
     );
     if (!confirmed) {
       return;
     }
     setMessage("");
     try {
-      await resetBudget(token, activeBudgetId);
+      await resetAll(token);
       const [
         loadedAccounts,
         loadedCategories,
@@ -1683,7 +1683,7 @@ export default function HomePage() {
       setRules(loadedRules);
       await loadReports();
     } catch (error) {
-      setMessage(buildErrorMessage("Не удалось обнулить бюджет", error));
+      setMessage(buildErrorMessage("Не удалось выполнить общий сброс", error));
     }
   };
 
@@ -1927,7 +1927,7 @@ export default function HomePage() {
                 categoryParent={categoryParent}
                 onCategoryParentChange={setCategoryParent}
                 categoryErrorDetails={categoryErrorDetails}
-                onResetBudget={handleResetBudget}
+                onResetAll={handleResetAll}
                 onLogout={handleLogout}
               />
             )}
@@ -3298,7 +3298,7 @@ type SettingsTabProps = {
   categoryParent: string;
   onCategoryParentChange: (value: string) => void;
   categoryErrorDetails: FormErrorDetails | null;
-  onResetBudget: () => void;
+  onResetAll: () => void;
   onLogout: () => void;
 };
 
@@ -3317,6 +3317,7 @@ const SettingsTab = ({
   onRuleCategoryChange,
   ruleTag,
   onRuleTagChange,
+  onResetAll,
   accounts,
   categories,
 }: SettingsTabProps) => (
@@ -3356,6 +3357,7 @@ const SettingsTab = ({
       ) : (
         <p>Правил пока нет</p>
       )}
+      <div className="mf-row" style={{ justifyContent: "flex-end" }}><Button variant="danger" onClick={onResetAll}>Обнулить всё</Button></div>
       <form className="mf-stack" onSubmit={onCreateRule}>
         <Input
           label="Шаблон"

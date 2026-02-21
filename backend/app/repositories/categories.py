@@ -73,3 +73,52 @@ def create_category(
     if not fallback_data:
         raise RuntimeError("Failed to create category in Supabase")
     return fallback_data[0]
+
+
+def update_category(
+    user_id: str,
+    category_id: str,
+    name: str,
+    parent_id: str | None = None,
+) -> dict[str, Any]:
+    client = get_supabase_client()
+    existing = (
+        client.table("categories")
+        .select("id, budget_id")
+        .eq("id", category_id)
+        .limit(1)
+        .execute()
+    )
+    data = existing.data or []
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Category not found",
+        )
+    _ensure_budget_access(user_id, data[0]["budget_id"])
+    response = (
+        client.table("categories")
+        .update({"name": name, "parent_id": parent_id})
+        .eq("id", category_id)
+        .execute()
+    )
+    updated = response.data or []
+    if not updated:
+        raise RuntimeError("Failed to update category in Supabase")
+    return updated[0]
+
+
+def delete_category(user_id: str, category_id: str) -> None:
+    client = get_supabase_client()
+    existing = (
+        client.table("categories")
+        .select("id, budget_id")
+        .eq("id", category_id)
+        .limit(1)
+        .execute()
+    )
+    data = existing.data or []
+    if not data:
+        return
+    _ensure_budget_access(user_id, data[0]["budget_id"])
+    client.table("categories").delete().eq("id", category_id).execute()
