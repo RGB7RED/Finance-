@@ -333,6 +333,13 @@ export const resetBudget = async (
   });
 };
 
+export const resetAll = async (token: string): Promise<void> => {
+  await requestJson("/admin/reset-all", {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+};
+
 export const listBudgets = async (token: string): Promise<Budget[]> =>
   requestJson("/budgets", {
     headers: authHeaders(token),
@@ -420,6 +427,26 @@ export const adjustAccountBalance = async (
     body: JSON.stringify(payload),
   });
 
+export const updateAccount = async (
+  token: string,
+  accountId: string,
+  payload: { name: string; kind: string },
+): Promise<Account> =>
+  requestJson(`/accounts/${accountId}`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  });
+
+export const deleteAccount = async (
+  token: string,
+  accountId: string,
+): Promise<{ status: string }> =>
+  requestJson(`/accounts/${accountId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+
 export const listCategories = async (
   token: string,
   budgetId: string,
@@ -459,6 +486,26 @@ export const createCategory = async (
 
   return (await response.json()) as Category;
 };
+
+export const updateCategory = async (
+  token: string,
+  categoryId: string,
+  payload: { name: string; parent_id?: string | null },
+): Promise<Category> =>
+  requestJson(`/categories/${categoryId}`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  });
+
+export const deleteCategory = async (
+  token: string,
+  categoryId: string,
+): Promise<{ status: string }> =>
+  requestJson(`/categories/${categoryId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
 
 export const listTransactions = async (
   token: string,

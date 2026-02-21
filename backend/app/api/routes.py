@@ -9,13 +9,24 @@ from pydantic import BaseModel, Field, StrictInt
 from app.auth.jwt import create_access_token, get_current_user
 from app.auth.telegram import verify_init_data
 from app.core.config import get_telegram_bot_token, settings
-from app.repositories.accounts import create_account, list_accounts
+from app.repositories.accounts import (
+    create_account,
+    delete_account,
+    list_accounts,
+    update_account,
+)
 from app.repositories.budgets import (
     ensure_default_budgets,
     list_budgets,
+    reset_all_user_data,
     reset_budget_data,
 )
-from app.repositories.categories import create_category, list_categories
+from app.repositories.categories import (
+    create_category,
+    delete_category,
+    list_categories,
+    update_category,
+)
 from app.repositories.account_balance_events import (
     calculate_totals,
     create_balance_event,
@@ -73,6 +84,16 @@ class AccountCreateRequest(BaseModel):
 
 class CategoryCreateRequest(BaseModel):
     budget_id: str
+    name: str
+    parent_id: str | None = None
+
+
+class AccountUpdateRequest(BaseModel):
+    name: str
+    kind: str
+
+
+class CategoryUpdateRequest(BaseModel):
     name: str
     parent_id: str | None = None
 
@@ -343,6 +364,14 @@ def post_budgets_reset(
     return {"status": "ok"}
 
 
+@router.post("/admin/reset-all")
+def post_admin_reset_all(
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, str]:
+    reset_all_user_data(current_user["sub"])
+    return {"status": "ok"}
+
+
 @router.get("/accounts")
 def get_accounts(
     budget_id: str,
@@ -374,6 +403,24 @@ def post_accounts(
         payload.active_from,
         payload.initial_amount,
     )
+
+
+@router.patch("/accounts/{account_id}")
+def patch_accounts(
+    account_id: str,
+    payload: AccountUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    return update_account(current_user["sub"], account_id, payload.name, payload.kind)
+
+
+@router.delete("/accounts/{account_id}")
+def delete_accounts(
+    account_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, str]:
+    delete_account(current_user["sub"], account_id)
+    return {"status": "deleted"}
 
 
 @router.post("/accounts/{account_id}/adjust")
@@ -438,6 +485,26 @@ def post_categories(
     return create_category(
         current_user["sub"], payload.budget_id, payload.name, payload.parent_id
     )
+
+
+@router.patch("/categories/{category_id}")
+def patch_categories(
+    category_id: str,
+    payload: CategoryUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    return update_category(
+        current_user["sub"], category_id, payload.name, payload.parent_id
+    )
+
+
+@router.delete("/categories/{category_id}")
+def delete_categories(
+    category_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, str]:
+    delete_category(current_user["sub"], category_id)
+    return {"status": "deleted"}
 
 
 @router.get("/transactions")

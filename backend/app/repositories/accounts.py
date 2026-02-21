@@ -111,3 +111,52 @@ def create_account(
             },
         )
     return account
+
+
+def update_account(
+    user_id: str,
+    account_id: str,
+    name: str,
+    kind: str,
+) -> dict[str, Any]:
+    client = get_supabase_client()
+    existing = (
+        client.table("accounts")
+        .select("id, budget_id")
+        .eq("id", account_id)
+        .limit(1)
+        .execute()
+    )
+    data = existing.data or []
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Account not found",
+        )
+    _ensure_budget_access(user_id, data[0]["budget_id"])
+    response = (
+        client.table("accounts")
+        .update({"name": name, "kind": kind})
+        .eq("id", account_id)
+        .execute()
+    )
+    updated = response.data or []
+    if not updated:
+        raise RuntimeError("Failed to update account in Supabase")
+    return updated[0]
+
+
+def delete_account(user_id: str, account_id: str) -> None:
+    client = get_supabase_client()
+    existing = (
+        client.table("accounts")
+        .select("id, budget_id")
+        .eq("id", account_id)
+        .limit(1)
+        .execute()
+    )
+    data = existing.data or []
+    if not data:
+        return
+    _ensure_budget_access(user_id, data[0]["budget_id"])
+    client.table("accounts").delete().eq("id", account_id).execute()

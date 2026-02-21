@@ -69,3 +69,8 @@ def reset_budget_data(user_id: str, budget_id: str) -> None:
     ]
     for table in tables:
         client.table(table).delete().eq("budget_id", budget_id).execute()
+
+
+def reset_all_user_data(user_id: str) -> None:
+    client = get_supabase_client()
+    client.rpc("reset_all_user_data", {"p_user_id": user_id}).execute()
