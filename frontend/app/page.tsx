@@ -125,7 +125,8 @@ type DayModal =
   | "category-create"
   | "category-edit"
   | "goal-create"
-  | "debt-create";
+  | "debt-create"
+  | "debt-edit";
 
 const buildErrorMessage = (fallback: string, error: unknown): string => {
   if (isUnauthorized(error)) {
@@ -307,6 +308,8 @@ export default function HomePage() {
   const [debtOtherCreditor, setDebtOtherCreditor] = useState("");
   const [editingTransaction, setEditingTransaction] =
     useState<EditingTransaction | null>(null);
+  const [editingDebtTransaction, setEditingDebtTransaction] =
+    useState<Transaction | null>(null);
   const [dayModal, setDayModal] = useState<DayModal>(null);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [editingCategory, setEditingCategory] =
@@ -1212,6 +1215,7 @@ export default function HomePage() {
   };
 
   const handleCreateDebtFromDay = () => {
+    setEditingDebtTransaction(null);
     setDebtOtherAmount("");
     setDebtOtherCreditor("");
     setDebtOtherDirection("borrowed");
@@ -1304,10 +1308,13 @@ export default function HomePage() {
     setEditingTransaction(null);
   }, []);
 
+  const clearEditingDebtTransaction = useCallback(() => {
+    setEditingDebtTransaction(null);
+  }, []);
+
   const handleEditTransaction = useCallback(
     (tx: Transaction) => {
-      setActiveTab("ops");
-      setOpsMode("create");
+      setOpsMode("edit");
       setOpsDate(tx.date);
       setSelectedDate(tx.date);
       setEditingTransaction({ id: tx.id, kind: tx.kind, type: tx.type });
@@ -1344,7 +1351,6 @@ export default function HomePage() {
       setTransferNote(tx.note ?? "");
     },
     [
-      setActiveTab,
       setDebtOtherAccountId,
       setDebtOtherAmount,
       setDebtOtherDirection,
@@ -1367,6 +1373,25 @@ export default function HomePage() {
       setTransferNote,
       setTransferToAccountId,
     ],
+  );
+
+  const handleEditDebtFromDay = useCallback(
+    (tx: Transaction) => {
+      if (tx.kind !== "debt") {
+        return;
+      }
+      const debtMetadata = parseDebtMetadata(tx.note);
+      setEditingDebtTransaction(tx);
+      setDebtOtherAmount(String(tx.amount));
+      setDebtOtherDirection(
+        debtMetadata?.direction ?? (tx.type === "income" ? "borrowed" : "repaid"),
+      );
+      setDebtOtherAccountId(tx.account_id ?? "");
+      setDebtOtherCreditor(getDebtCreditor(debtMetadata, tx.note));
+      setOpsDate(tx.date);
+      setDayModal("debt-edit");
+    },
+    [],
   );
 
   const handleCreateIncome = async (event: FormEvent<HTMLFormElement>) => {
@@ -1634,7 +1659,9 @@ export default function HomePage() {
     const transactionDate = opsDate || selectedDate;
     const trimmedDebtNote = debtOtherCreditor.trim();
     try {
-      if (
+      if (editingDebtTransaction) {
+        await deleteTransaction(token, editingDebtTransaction.id);
+      } else if (
         editingTransaction &&
         editingTransaction.kind === "debt" &&
         (editingTransaction.type === "income" ||
@@ -1656,7 +1683,8 @@ export default function HomePage() {
       setDebtOtherAmount("");
       setDebtOtherCreditor("");
       clearEditingTransaction();
-      if (dayModal === "debt-create") {
+      clearEditingDebtTransaction();
+      if (dayModal === "debt-create" || dayModal === "debt-edit") {
         setDayModal(null);
       }
       const [updatedAccounts] = await Promise.all([
@@ -1919,8 +1947,9 @@ export default function HomePage() {
                 accountMap={accountMap}
                 onDeleteTransaction={handleDeleteTransaction}
                 onEditTransaction={handleEditTransaction}
+                onEditDebtTransaction={handleEditDebtFromDay}
                 dayModal={dayModal}
-                onCloseModal={() => setDayModal(null)}
+                onCloseModal={() => { setDayModal(null); clearEditingDebtTransaction(); }}
                 onCreateAccountClick={handleCreateAccountFromDay}
                 onEditAccount={handleEditAccountFromDay}
                 onDeleteAccount={handleDeleteAccountFromDay}
@@ -2225,6 +2254,54 @@ const OperationDateRow = ({
   );
 };
 
+type DebtFormProps = {
+  mode: "create" | "edit";
+  hasAccounts: boolean;
+  dateValue: string;
+  onDateChange: (value: string) => void;
+  debtOtherAccountId: string;
+  onDebtOtherAccountChange: (value: string) => void;
+  debtOtherAmount: string;
+  onDebtOtherAmountChange: (value: string) => void;
+  debtOtherDirection: "borrowed" | "repaid";
+  onDebtOtherDirectionChange: (value: "borrowed" | "repaid") => void;
+  debtOtherCreditor: string;
+  onDebtOtherCreditorChange: (value: string) => void;
+  accounts: Account[];
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onClose: () => void;
+};
+
+const DebtForm = ({
+  mode,
+  hasAccounts,
+  dateValue,
+  onDateChange,
+  debtOtherAccountId,
+  onDebtOtherAccountChange,
+  debtOtherAmount,
+  onDebtOtherAmountChange,
+  debtOtherDirection,
+  onDebtOtherDirectionChange,
+  debtOtherCreditor,
+  onDebtOtherCreditorChange,
+  accounts,
+  onSubmit,
+  onClose,
+}: DebtFormProps) => (
+  <Card title={mode === "edit" ? "Редактирование долга" : "Создать · Долг"}>
+    {!hasAccounts && <p>Создайте хотя бы один счёт для учета долгов.</p>}
+    <form className="mf-stack" onSubmit={onSubmit}>
+      <OperationDateRow dateValue={dateValue} onDateChange={onDateChange} />
+      <label className="mf-input"><span className="mf-input__label">Счет</span><select className="mf-select" value={debtOtherAccountId} onChange={(event) => onDebtOtherAccountChange(event.target.value)} required disabled={!hasAccounts}><option value="">Выберите счет</option>{accounts.map((account) => (<option key={account.id} value={account.id}>{account.name}</option>))}</select></label>
+      <Input label="Сумма" type="number" value={debtOtherAmount} onChange={(event) => onDebtOtherAmountChange(event.target.value)} required disabled={!hasAccounts} />
+      <label className="mf-input"><span className="mf-input__label">Операция</span><select className="mf-select" value={debtOtherDirection} onChange={(event) => onDebtOtherDirectionChange(event.target.value as "borrowed" | "repaid")} disabled={!hasAccounts}><option value="borrowed">Взял в долг</option><option value="repaid">Вернул долг</option></select></label>
+      <Input label="Кредитор" type="text" value={debtOtherCreditor} onChange={(event) => onDebtOtherCreditorChange(event.target.value)} placeholder="У кого заняли или кому вернули" disabled={!hasAccounts} />
+      <div className="mf-row"><Button type="submit" disabled={!hasAccounts}>{mode === "edit" ? "Сохранить изменения" : "Сохранить"}</Button><Button type="button" variant="secondary" onClick={onClose}>Закрыть</Button></div>
+    </form>
+  </Card>
+);
+
 type TransactionsGroupListProps = {
   transactions: Transaction[];
   accountMap: Map<string, Account>;
@@ -2486,6 +2563,7 @@ type DayTabProps = {
   accountMap: Map<string, Account>;
   onDeleteTransaction: (txId: string) => void;
   onEditTransaction: (tx: Transaction) => void;
+  onEditDebtTransaction: (tx: Transaction) => void;
   dayModal: DayModal;
   onCloseModal: () => void;
   onCreateAccountClick: () => void;
@@ -2558,6 +2636,7 @@ const DayTab = ({
   accountMap,
   onDeleteTransaction,
   onEditTransaction,
+  onEditDebtTransaction,
   dayModal,
   onCloseModal,
   onCreateAccountClick,
@@ -2825,7 +2904,7 @@ const DayTab = ({
                   <td>{formatRub(tx.amount)}</td>
                   <td>{directionLabel}</td>
                   <td>
-                    <button type="button" className="mf-icon-btn" onClick={() => onEditTransaction(tx)}>✏️</button>
+                    <button type="button" className="mf-icon-btn" onClick={() => onEditDebtTransaction(tx)}>✏️</button>
                     <button type="button" className="mf-icon-btn" onClick={() => onDeleteTransaction(tx.id)}>🗑</button>
                   </td>
                 </tr>
@@ -2835,18 +2914,24 @@ const DayTab = ({
         </table>
       ) : <p>Долгов нет</p>}
       <Button variant="secondary" onClick={onCreateDebtClick}>➕ Добавить долг</Button>
-      {dayModal === "debt-create" && (
-        <Card title="Создать · Долг">
-          {!hasAccounts && <p>Создайте хотя бы один счёт для учета долгов.</p>}
-          <form className="mf-stack" onSubmit={onCreateDebtOther}>
-            <OperationDateRow dateValue={selectedDate} onDateChange={onSelectedDateChange} />
-            <label className="mf-input"><span className="mf-input__label">Счет</span><select className="mf-select" value={debtOtherAccountId} onChange={(event) => onDebtOtherAccountChange(event.target.value)} required disabled={!hasAccounts}><option value="">Выберите счет</option>{accounts.map((account) => (<option key={account.id} value={account.id}>{account.name}</option>))}</select></label>
-            <Input label="Сумма" type="number" value={debtOtherAmount} onChange={(event) => onDebtOtherAmountChange(event.target.value)} required disabled={!hasAccounts} />
-            <label className="mf-input"><span className="mf-input__label">Операция</span><select className="mf-select" value={debtOtherDirection} onChange={(event) => onDebtOtherDirectionChange(event.target.value as "borrowed" | "repaid")} disabled={!hasAccounts}><option value="borrowed">Взял в долг</option><option value="repaid">Вернул долг</option></select></label>
-            <Input label="Кредитор" type="text" value={debtOtherCreditor} onChange={(event) => onDebtOtherCreditorChange(event.target.value)} placeholder="У кого заняли или кому вернули" disabled={!hasAccounts} />
-            <div className="mf-row"><Button type="submit" disabled={!hasAccounts}>Сохранить</Button><Button type="button" variant="secondary" onClick={onCloseModal}>Закрыть</Button></div>
-          </form>
-        </Card>
+      {(dayModal === "debt-create" || dayModal === "debt-edit") && (
+        <DebtForm
+          mode={dayModal === "debt-edit" ? "edit" : "create"}
+          hasAccounts={hasAccounts}
+          dateValue={selectedDate}
+          onDateChange={onSelectedDateChange}
+          debtOtherAccountId={debtOtherAccountId}
+          onDebtOtherAccountChange={onDebtOtherAccountChange}
+          debtOtherAmount={debtOtherAmount}
+          onDebtOtherAmountChange={onDebtOtherAmountChange}
+          debtOtherDirection={debtOtherDirection}
+          onDebtOtherDirectionChange={onDebtOtherDirectionChange}
+          debtOtherCreditor={debtOtherCreditor}
+          onDebtOtherCreditorChange={onDebtOtherCreditorChange}
+          accounts={accounts}
+          onSubmit={onCreateDebtOther}
+          onClose={onCloseModal}
+        />
       )}
     </Card>
 
@@ -2984,17 +3069,78 @@ const OpsTab = ({
       <button type="button" className="mf-icon-btn" onClick={() => onModeChange("create")}>Создать</button>
       <button type="button" className="mf-icon-btn" onClick={() => onModeChange("edit")}>Изменить</button>
     </div>
-    {editingTransaction && (
-
+    {mode === "edit" && editingTransaction && (
       <Card title="Редактирование операции">
         <div className="mf-row">
-          <p className="mf-muted">Вы редактируете выбранную операцию.</p>
+          <p className="mf-muted">operationId: {editingTransaction.id}</p>
           <Button variant="secondary" onClick={onCancelEdit}>
             Отменить
           </Button>
         </div>
       </Card>
     )}
+    {mode === "edit" && editingTransaction?.kind === "debt" && (
+      <DebtForm
+        mode="edit"
+        hasAccounts={hasAccounts}
+        dateValue={opsDate}
+        onDateChange={onOpsDateChange}
+        debtOtherAccountId={debtOtherAccountId}
+        onDebtOtherAccountChange={onDebtOtherAccountChange}
+        debtOtherAmount={debtOtherAmount}
+        onDebtOtherAmountChange={onDebtOtherAmountChange}
+        debtOtherDirection={debtOtherDirection}
+        onDebtOtherDirectionChange={onDebtOtherDirectionChange}
+        debtOtherCreditor={debtOtherCreditor}
+        onDebtOtherCreditorChange={onDebtOtherCreditorChange}
+        accounts={accounts}
+        onSubmit={onCreateDebtOther}
+        onClose={onCancelEdit}
+      />
+    )}
+
+    {mode === "edit" && editingTransaction?.kind !== "debt" && editingTransaction?.type === "income" && (
+      <Card title="Редактирование операции">
+        <p className="mf-muted">operationId: {editingTransaction.id}</p>
+        <form className="mf-stack" onSubmit={onCreateIncome}>
+          <OperationDateRow dateValue={opsDate} onDateChange={onOpsDateChange} />
+          <label className="mf-input"><span className="mf-input__label">Счет</span><select className="mf-select" value={incomeAccountId} onChange={(event) => onIncomeAccountChange(event.target.value)} required disabled={!hasAccounts}><option value="">Выберите счет</option>{accounts.map((account) => (<option key={account.id} value={account.id}>{account.name}</option>))}</select></label>
+          <Input label="Сумма" type="number" value={incomeAmount} onChange={(event) => onIncomeAmountChange(event.target.value)} required disabled={!hasAccounts} />
+          <label className="mf-input"><span className="mf-input__label">Категория</span><select className="mf-select" value={incomeCategoryId} onChange={(event) => onIncomeCategoryChange(event.target.value)} required disabled={!hasAccounts}><option value="">Выберите категорию</option>{categories.map((category) => (<option key={category.id} value={category.id}>{category.name}</option>))}</select></label>
+          <Input label="Комментарий" type="text" value={incomeNote} onChange={(event) => onIncomeNoteChange(event.target.value)} disabled={!hasAccounts} />
+          <div className="mf-row"><Button type="submit" disabled={!hasAccounts}>Сохранить изменения</Button><Button type="button" variant="secondary" onClick={onCancelEdit}>Отменить</Button></div>
+        </form>
+      </Card>
+    )}
+
+    {mode === "edit" && editingTransaction?.kind !== "debt" && editingTransaction?.type === "expense" && (
+      <Card title="Редактирование операции">
+        <p className="mf-muted">operationId: {editingTransaction.id}</p>
+        <form className="mf-stack" onSubmit={onCreateExpense}>
+          <OperationDateRow dateValue={opsDate} onDateChange={onOpsDateChange} />
+          <label className="mf-input"><span className="mf-input__label">Счет</span><select className="mf-select" value={expenseAccountId} onChange={(event) => onExpenseAccountChange(event.target.value)} required disabled={!hasAccounts}><option value="">Выберите счет</option>{accounts.map((account) => (<option key={account.id} value={account.id}>{account.name}</option>))}</select></label>
+          <Input label="Сумма" type="number" value={expenseAmount} onChange={(event) => onExpenseAmountChange(event.target.value)} required disabled={!hasAccounts} />
+          <label className="mf-input"><span className="mf-input__label">Категория</span><select className="mf-select" value={expenseCategoryId} onChange={(event) => onExpenseCategoryChange(event.target.value)} disabled={!hasAccounts}><option value="">Без категории</option>{categories.map((category) => (<option key={category.id} value={category.id}>{category.name}</option>))}</select></label>
+          <Input label="Комментарий" type="text" value={expenseNote} onChange={(event) => onExpenseNoteChange(event.target.value)} disabled={!hasAccounts} />
+          <div className="mf-row"><Button type="submit" disabled={!hasAccounts}>Сохранить изменения</Button><Button type="button" variant="secondary" onClick={onCancelEdit}>Отменить</Button></div>
+        </form>
+      </Card>
+    )}
+
+    {mode === "edit" && editingTransaction?.kind !== "debt" && editingTransaction?.type === "transfer" && (
+      <Card title="Редактирование операции">
+        <p className="mf-muted">operationId: {editingTransaction.id}</p>
+        <form className="mf-stack" onSubmit={onCreateTransfer}>
+          <OperationDateRow dateValue={opsDate} onDateChange={onOpsDateChange} />
+          <label className="mf-input"><span className="mf-input__label">Счет списания</span><select className="mf-select" value={transferFromAccountId} onChange={(event) => onTransferFromAccountChange(event.target.value)} required disabled={!hasAccounts}><option value="">Выберите счет</option>{accounts.map((account) => (<option key={account.id} value={account.id}>{account.name}</option>))}</select></label>
+          <label className="mf-input"><span className="mf-input__label">Счет зачисления</span><select className="mf-select" value={transferToAccountId} onChange={(event) => onTransferToAccountChange(event.target.value)} required disabled={!hasAccounts}><option value="">Выберите счет</option>{accounts.map((account) => (<option key={account.id} value={account.id}>{account.name}</option>))}</select></label>
+          <Input label="Сумма" type="number" value={transferAmount} onChange={(event) => onTransferAmountChange(event.target.value)} required disabled={!hasAccounts} />
+          <Input label="Комментарий" type="text" value={transferNote} onChange={(event) => onTransferNoteChange(event.target.value)} disabled={!hasAccounts} />
+          <div className="mf-row"><Button type="submit" disabled={!hasAccounts}>Сохранить изменения</Button><Button type="button" variant="secondary" onClick={onCancelEdit}>Отменить</Button></div>
+        </form>
+      </Card>
+    )}
+
     {mode === "create" && (
       <>
     <Card title="Создать · Доход">
