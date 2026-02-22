@@ -67,7 +67,7 @@ def test_list_active_debts_as_of_filters_closed(monkeypatch):
             "date": "2024-01-01",
             "type": "income",
             "amount": 100,
-            "note": '{"debt_type":"people","direction":"borrowed","creditor":"Иван"}',
+            "note": '{"debt_type":"people","direction":"borrowed","note":"Иван"}',
             "created_at": "2024-01-01T10:00:00Z",
         },
         {
@@ -78,7 +78,7 @@ def test_list_active_debts_as_of_filters_closed(monkeypatch):
             "date": "2024-01-03",
             "type": "expense",
             "amount": 100,
-            "note": '{"debt_type":"people","direction":"repaid","creditor":"Иван"}',
+            "note": '{"debt_type":"people","direction":"repaid","note":"Иван"}',
             "created_at": "2024-01-03T10:00:00Z",
         },
     ]
@@ -98,6 +98,7 @@ def test_list_active_debts_as_of_filters_closed(monkeypatch):
     assert result_on_open == [
         {
             "creditor": "Иван",
+            "creditor_name": "Иван",
             "amount": 100,
             "debt_date": "2024-01-01",
             "closed_at": None,

@@ -230,6 +230,7 @@ export type DailyState = {
 
 export type ActiveDebt = {
   creditor: string;
+  creditor_name: string;
   amount: number;
   debt_date: string;
   closed_at: string | null;

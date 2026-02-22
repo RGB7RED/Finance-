@@ -87,6 +87,10 @@ def list_transactions(
 
 def _resolve_debt_creditor(note: str | None) -> str:
     metadata = _parse_debt_metadata(note)
+    if metadata and isinstance(metadata.get("note"), str):
+        creditor = metadata["note"].strip()
+        if creditor:
+            return creditor
     if metadata and isinstance(metadata.get("creditor"), str):
         creditor = metadata["creditor"].strip()
         if creditor:
@@ -150,9 +154,11 @@ def list_active_debts_as_of(
         if debt_date <= target_date.isoformat() and (
             closed_at is None or closed_at > target_date.isoformat()
         ):
+            creditor_name = state["creditor"]
             active_debts.append(
                 {
-                    "creditor": state["creditor"],
+                    "creditor": creditor_name,
+                    "creditor_name": creditor_name,
                     "amount": int(state["amount"]),
                     "debt_date": debt_date,
                     "closed_at": closed_at,
@@ -194,9 +200,11 @@ def _parse_debt_metadata(note: str | None) -> dict[str, Any] | None:
     if direction not in ("borrowed", "repaid"):
         return None
     creditor = data.get("creditor")
+    note_value = data.get("note")
     return {
         "debt_type": debt_type,
         "direction": direction,
+        "note": note_value if isinstance(note_value, str) else None,
         "creditor": creditor if isinstance(creditor, str) else None,
     }
 

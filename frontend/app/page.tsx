@@ -2961,8 +2961,8 @@ const DayTab = ({
           </thead>
           <tbody>
             {activeDebts.map((debt) => (
-              <tr key={`${debt.creditor}-${debt.debt_date}`}>
-                <td>{debt.creditor}</td>
+              <tr key={`${debt.creditor_name}-${debt.debt_date}`}>
+                <td>{debt.creditor_name}</td>
                 <td>{formatRub(debt.amount)}</td>
                 <td>{formatShortRuDate(debt.debt_date)}</td>
               </tr>
