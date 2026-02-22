@@ -1867,54 +1867,62 @@ export default function HomePage() {
   return (
     <main>
       <div className="mf-container">
-        <div className="mf-money-strip" aria-hidden="true" />
-        <Card title="Статус">
-          {status === "loading" && <p>Загрузка...</p>}
-          {status === "unauthorized" && (
-            <div className="mf-stack">
-              {message && <p>{message}</p>}
-              {authErrorDetails && (
-                <div>
-                  <p>auth_url: {authErrorDetails.authUrl}</p>
-                  <p>error_code: {authErrorDetails.errorCode}</p>
-                  <p>initData_length: {authErrorDetails.initDataLength}</p>
-                  {authErrorDetails.httpStatus !== undefined && (
-                    <p>http_status: {authErrorDetails.httpStatus}</p>
-                  )}
-                  {authErrorDetails.responseText && (
-                    <p>response_text: {authErrorDetails.responseText}</p>
-                  )}
-                </div>
-              )}
-              <p>Откройте в Telegram Mini App</p>
-            </div>
-          )}
-          {status === "error" && (
-            <div className="mf-stack">
-              {message && <p>{message}</p>}
-              {healthErrorDetails && (
-                <div>
-                  <p>API недоступен</p>
-                  <p>url: {healthErrorDetails.url}</p>
-                </div>
-              )}
-              {authErrorDetails && !healthErrorDetails && (
-                <div>
-                  <p>auth_url: {authErrorDetails.authUrl}</p>
-                  <p>error_code: {authErrorDetails.errorCode}</p>
-                  <p>initData_length: {authErrorDetails.initDataLength}</p>
-                  {authErrorDetails.httpStatus !== undefined && (
-                    <p>http_status: {authErrorDetails.httpStatus}</p>
-                  )}
-                  {authErrorDetails.responseText && (
-                    <p>response_text: {authErrorDetails.responseText}</p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          {status === "ready" && message && <p>{message}</p>}
-        </Card>
+        <div
+          className={`mf-money-strip ${
+            balanceTotal > 0
+              ? "mf-money-strip--pos"
+              : balanceTotal < 0
+                ? "mf-money-strip--neg"
+                : "mf-money-strip--warn"
+          }`}
+          aria-hidden="true"
+        />
+
+        {status === "loading" && <p className="mf-status-line">Загрузка...</p>}
+        {status === "unauthorized" && (
+          <div className="mf-stack mf-status-line">
+            {message && <p>{message}</p>}
+            {authErrorDetails && (
+              <div>
+                <p>auth_url: {authErrorDetails.authUrl}</p>
+                <p>error_code: {authErrorDetails.errorCode}</p>
+                <p>initData_length: {authErrorDetails.initDataLength}</p>
+                {authErrorDetails.httpStatus !== undefined && (
+                  <p>http_status: {authErrorDetails.httpStatus}</p>
+                )}
+                {authErrorDetails.responseText && (
+                  <p>response_text: {authErrorDetails.responseText}</p>
+                )}
+              </div>
+            )}
+            <p>Откройте в Telegram Mini App</p>
+          </div>
+        )}
+        {status === "error" && (
+          <div className="mf-stack mf-status-line">
+            {message && <p>{message}</p>}
+            {healthErrorDetails && (
+              <div>
+                <p>API недоступен</p>
+                <p>url: {healthErrorDetails.url}</p>
+              </div>
+            )}
+            {authErrorDetails && !healthErrorDetails && (
+              <div>
+                <p>auth_url: {authErrorDetails.authUrl}</p>
+                <p>error_code: {authErrorDetails.errorCode}</p>
+                <p>initData_length: {authErrorDetails.initDataLength}</p>
+                {authErrorDetails.httpStatus !== undefined && (
+                  <p>http_status: {authErrorDetails.httpStatus}</p>
+                )}
+                {authErrorDetails.responseText && (
+                  <p>response_text: {authErrorDetails.responseText}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {status === "ready" && message && <p className="mf-status-line">{message}</p>}
 
         {status === "ready" && (
           <>
@@ -2226,17 +2234,16 @@ const OperationDateRow = ({
   return (
     <div className="mf-stack">
       <div className="mf-row mf-date-row">
-        <span className="mf-date-row__label">Дата:</span>
         <span className="mf-date-row__value mf-date-prominent">
-          {formatShortRuDate(dateValue)}
+          📅 {formatShortRuDate(dateValue)}
         </span>
         <button
           type="button"
-          className="mf-date-row__edit"
+          className="mf-icon-btn mf-date-row__edit"
           onClick={() => setIsEditing((prev) => !prev)}
           aria-label="Изменить дату"
         >
-          ✎
+          ✏️
         </button>
       </div>
       {isEditing && (
@@ -2515,7 +2522,7 @@ const TransactionsGroupList = ({
                         <Button
                           variant="danger"
                           className="mf-button--small"
-                          onClick={() => onDeleteTransaction(tx.id)}
+                          onClick={() => window.confirm("Удалить операцию?") && onDeleteTransaction(tx.id)}
                         >
                           Удалить
                         </Button>
@@ -2681,30 +2688,35 @@ const DayTab = ({
   onCreateDebtOther,
 }: DayTabProps) => (
   <div className="mf-stack">
-    <div
-      className="mf-row"
-      style={{
-        position: "sticky",
-        top: 0,
-        zIndex: 5,
-        background: "var(--bg)",
-        paddingBottom: "8px",
-      }}
-    >
-      <strong className="mf-date-prominent">Дата: {selectedDate}</strong>
-      <Input
+    <div className="mf-row mf-date-row mf-date-row--sticky">
+      <strong className="mf-date-prominent">📅 {formatShortRuDate(selectedDate)}</strong>
+      <button
+        type="button"
+        className="mf-icon-btn mf-date-row__edit"
+        onClick={() => {
+          const picker = document.getElementById("mf-day-date-picker") as HTMLInputElement | null;
+          picker?.showPicker?.();
+          picker?.focus();
+        }}
+        aria-label="Изменить дату"
+      >
+        ✏️
+      </button>
+      <input
+        id="mf-day-date-picker"
+        className="mf-date-row__picker"
         type="date"
         value={selectedDate}
         onChange={(event) => onSelectedDateChange(event.target.value)}
       />
     </div>
 
-    <div className="mf-grid-2">
+    <div className="mf-grid-2 mf-summary-grid">
       <Card>
         <div className="mf-row" style={{ justifyContent: "space-between" }}>
           <div>
             <div className="mf-small">Баланс</div>
-            <div style={{ fontSize: "22px", fontWeight: 700 }}>
+            <div className={`mf-kpi-value ${balanceTotal > 0 ? "mf-kpi-value--pos" : balanceTotal < 0 ? "mf-kpi-value--neg" : "mf-kpi-value--neutral"}`}>
               {formatRub(balanceTotal)}
             </div>
           </div>
@@ -2714,7 +2726,7 @@ const DayTab = ({
         <div className="mf-row" style={{ justifyContent: "space-between" }}>
           <div>
             <div className="mf-small">Остаток</div>
-            <div style={{ fontSize: "22px", fontWeight: 700 }}>
+            <div className="mf-kpi-subtle">
               {formatRub(assetsTotal)}
             </div>
           </div>
@@ -2724,7 +2736,7 @@ const DayTab = ({
         <div className="mf-row" style={{ justifyContent: "space-between" }}>
           <div>
             <div className="mf-small">Долги</div>
-            <div style={{ fontSize: "22px", fontWeight: 700 }}>
+            <div className="mf-kpi-debt">
               {formatRub(debtsTotal)}
             </div>
           </div>
@@ -2734,8 +2746,11 @@ const DayTab = ({
         <div className="mf-row" style={{ justifyContent: "space-between" }}>
           <div>
             <div className="mf-small">Итог дня</div>
-            <div style={{ fontSize: "22px", fontWeight: 700 }}>
-              {formatRub(bottomDayTotal)}
+            <div className="mf-day-total-badge">
+              <span className="mf-day-total-dot" />
+              {bottomDayTotal >= 0
+                ? `+${formatRub(bottomDayTotal)}`
+                : formatRub(bottomDayTotal)}
             </div>
           </div>
           {hasAccounts && (
@@ -2793,7 +2808,7 @@ const DayTab = ({
                   <td>{formatRub(currentBalance)}</td>
                   <td>
                     <button type="button" className="mf-icon-btn" onClick={() => onEditAccount(account)}>✏️</button>
-                    <button type="button" className="mf-icon-btn" onClick={() => onDeleteAccount(account.id)}>🗑</button>
+                    <button type="button" className="mf-icon-btn mf-icon-btn--danger" onClick={() => window.confirm("Удалить счет?") && onDeleteAccount(account.id)}>🗑</button>
                   </td>
                 </tr>
               );
@@ -2827,8 +2842,20 @@ const DayTab = ({
             {goals.map((goal) => (
               <tr key={goal.id}>
                 <td>{goal.title}</td>
-                <td>{goal.current_amount} / {goal.target_amount} ₽</td>
-<td>✏️ 🗑</td>
+                <td>
+                  <div className="mf-goal-progress-wrap">
+                    <div className="mf-goal-progress-track">
+                      <div
+                        className="mf-goal-progress-fill"
+                        style={{ width: `${Math.min(100, Math.round((goal.current_amount / Math.max(goal.target_amount, 1)) * 100))}%` }}
+                      />
+                    </div>
+                    <span className="mf-small">{Math.min(100, Math.round((goal.current_amount / Math.max(goal.target_amount, 1)) * 100))}% · {goal.current_amount} / {goal.target_amount} ₽</span>
+                  </div>
+                </td>
+                <td>
+                  <button type="button" className="mf-icon-btn" onClick={onCreateGoalClick} aria-label="Редактировать цель">✏️</button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -2868,7 +2895,7 @@ const DayTab = ({
                   <td>{formatRub(totalExpense)}</td>
                   <td>
                     <button type="button" className="mf-icon-btn" onClick={() => onEditCategory(category)}>✏️</button>
-                    <button type="button" className="mf-icon-btn" onClick={() => onDeleteCategory(category.id)}>🗑</button>
+                    <button type="button" className="mf-icon-btn mf-icon-btn--danger" onClick={() => window.confirm("Удалить категорию?") && onDeleteCategory(category.id)}>🗑</button>
                   </td>
                 </tr>
               );
@@ -2905,7 +2932,7 @@ const DayTab = ({
                   <td>{directionLabel}</td>
                   <td>
                     <button type="button" className="mf-icon-btn" onClick={() => onEditDebtTransaction(tx)}>✏️</button>
-                    <button type="button" className="mf-icon-btn" onClick={() => onDeleteTransaction(tx.id)}>🗑</button>
+                    <button type="button" className="mf-icon-btn mf-icon-btn--danger" onClick={() => window.confirm("Удалить операцию?") && onDeleteTransaction(tx.id)}>🗑</button>
                   </td>
                 </tr>
               );
@@ -3065,9 +3092,9 @@ const OpsTab = ({
   onModeChange,
 }: OpsTabProps) => (
   <div className="mf-stack">
-    <div className="tabs mf-row">
-      <button type="button" className="mf-icon-btn" onClick={() => onModeChange("create")}>Создать</button>
-      <button type="button" className="mf-icon-btn" onClick={() => onModeChange("edit")}>Изменить</button>
+    <div className="tabs mf-row mf-ops-switch">
+      <button type="button" className="mf-button mf-button--primary mf-button--fab" onClick={() => onModeChange("create")}>Создать</button>
+      <button type="button" className="mf-button mf-button--secondary" onClick={() => onModeChange("edit")}>История</button>
     </div>
     {mode === "edit" && editingTransaction && (
       <Card title="Редактирование операции">
@@ -3395,7 +3422,7 @@ const OpsTab = ({
 
     {mode === "edit" && (
       <TransactionsCard
-        title="Изменить · История операций"
+        title="История операций"
       selectedDate={selectedDate}
       onSelectedDateChange={onSelectedDateChange}
       transactions={transactions}
@@ -3831,7 +3858,7 @@ const SettingsTab = ({
                   <Button
                     variant="danger"
                     className="mf-button--small"
-                    onClick={() => onDeleteRule(rule.id)}
+                    onClick={() => window.confirm("Удалить правило?") && onDeleteRule(rule.id)}
                   >
                     Удалить
                   </Button>
