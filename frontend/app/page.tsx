@@ -17,6 +17,7 @@ import { Pill } from "../src/components/ui/Pill";
 import { Tabs } from "../src/components/ui/Tabs";
 import {
   type Account,
+  type ActiveDebt,
   type AuthError,
   type BalanceByAccountsReport,
   type Budget,
@@ -61,6 +62,7 @@ import {
   getReportSummary,
   isUnauthorized,
   listAccounts,
+  listActiveDebts,
   listBudgets,
   listCategories,
   listGoals,
@@ -230,6 +232,7 @@ export default function HomePage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [activeDebts, setActiveDebts] = useState<ActiveDebt[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [dailyState, setDailyState] = useState<DailyState | null>(null);
@@ -578,12 +581,14 @@ export default function HomePage() {
           loadedAccounts,
           loadedCategories,
           loadedTransactions,
+          loadedActiveDebts,
           loadedGoals,
           loadedRules,
         ] = await Promise.all([
           listAccounts(resolvedToken, nextBudgetId),
           listCategories(resolvedToken, nextBudgetId),
           listTransactions(resolvedToken, nextBudgetId, selectedDate),
+          listActiveDebts(resolvedToken, nextBudgetId, selectedDate),
           listGoals(resolvedToken, nextBudgetId),
           listRules(resolvedToken, nextBudgetId),
         ]);
@@ -591,6 +596,7 @@ export default function HomePage() {
         setAccounts(loadedAccounts);
         setCategories(loadedCategories);
         setTransactions(loadedTransactions);
+        setActiveDebts(loadedActiveDebts);
         setGoals(loadedGoals);
         setRules(loadedRules);
         setStatus("ready");
@@ -615,6 +621,7 @@ export default function HomePage() {
     setAccounts([]);
     setCategories([]);
     setTransactions([]);
+    setActiveDebts([]);
     setGoals([]);
     setRules([]);
     setDailyState(null);
@@ -730,17 +737,19 @@ export default function HomePage() {
     if (!token || !activeBudgetId) {
       return;
     }
-    const [loadedAccounts, loadedCategories, loadedTransactions, loadedGoals] =
+    const [loadedAccounts, loadedCategories, loadedTransactions, loadedActiveDebts, loadedGoals] =
       await Promise.all([
         listAccounts(token, activeBudgetId),
         listCategories(token, activeBudgetId),
         listTransactions(token, activeBudgetId, selectedDate),
+        listActiveDebts(token, activeBudgetId, selectedDate),
         listGoals(token, activeBudgetId),
       ]);
     await loadDailyStateData(token, activeBudgetId, selectedDate);
     setAccounts(loadedAccounts);
     setCategories(loadedCategories);
     setTransactions(loadedTransactions);
+    setActiveDebts(loadedActiveDebts);
     setGoals(loadedGoals);
   }, [token, activeBudgetId, selectedDate]);
 
@@ -920,12 +929,14 @@ export default function HomePage() {
         loadedAccounts,
         loadedCategories,
         loadedTransactions,
+        loadedActiveDebts,
         loadedGoals,
         loadedRules,
       ] = await Promise.all([
         listAccounts(token, nextBudgetId),
         listCategories(token, nextBudgetId),
         listTransactions(token, nextBudgetId, selectedDate),
+        listActiveDebts(token, nextBudgetId, selectedDate),
         listGoals(token, nextBudgetId),
         listRules(token, nextBudgetId),
       ]);
@@ -933,6 +944,7 @@ export default function HomePage() {
       setAccounts(loadedAccounts);
       setCategories(loadedCategories);
       setTransactions(loadedTransactions);
+      setActiveDebts(loadedActiveDebts);
       setGoals(loadedGoals);
       setRules(loadedRules);
     } catch (error) {
@@ -948,13 +960,15 @@ export default function HomePage() {
         return;
       }
       try {
-        const [loadedAccounts, loadedTransactions] = await Promise.all([
+        const [loadedAccounts, loadedTransactions, loadedActiveDebts] = await Promise.all([
           listAccounts(token, activeBudgetId),
           listTransactions(token, activeBudgetId, selectedDate),
+          listActiveDebts(token, activeBudgetId, selectedDate),
         ]);
         await loadDailyStateData(token, activeBudgetId, selectedDate);
         setAccounts(loadedAccounts);
         setTransactions(loadedTransactions);
+        setActiveDebts(loadedActiveDebts);
       } catch (error) {
         setMessage(buildErrorMessage("Не удалось загрузить операции", error));
       }
@@ -1440,12 +1454,16 @@ export default function HomePage() {
       setIncomeCategoryId("");
       setIncomeNote("");
       clearEditingTransaction();
-      const updatedTransactions = await listTransactions(
-        token,
-        activeBudgetId,
-        selectedDate,
-      );
+      const [updatedTransactions, updatedActiveDebts] = await Promise.all([
+        listTransactions(
+          token,
+          activeBudgetId,
+          selectedDate,
+        ),
+        listActiveDebts(token, activeBudgetId, selectedDate),
+      ]);
       setTransactions(updatedTransactions);
+      setActiveDebts(updatedActiveDebts);
       await loadDailyStateData(token, activeBudgetId, selectedDate);
       await loadReports();
     } catch (error) {
@@ -1500,12 +1518,16 @@ export default function HomePage() {
       setExpenseAmount("");
       setExpenseNote("");
       clearEditingTransaction();
-      const updatedTransactions = await listTransactions(
-        token,
-        activeBudgetId,
-        selectedDate,
-      );
+      const [updatedTransactions, updatedActiveDebts] = await Promise.all([
+        listTransactions(
+          token,
+          activeBudgetId,
+          selectedDate,
+        ),
+        listActiveDebts(token, activeBudgetId, selectedDate),
+      ]);
       setTransactions(updatedTransactions);
+      setActiveDebts(updatedActiveDebts);
       await loadDailyStateData(token, activeBudgetId, selectedDate);
       await loadReports();
     } catch (error) {
@@ -1563,12 +1585,16 @@ export default function HomePage() {
       setTransferAmount("");
       setTransferNote("");
       clearEditingTransaction();
-      const updatedTransactions = await listTransactions(
-        token,
-        activeBudgetId,
-        selectedDate,
-      );
+      const [updatedTransactions, updatedActiveDebts] = await Promise.all([
+        listTransactions(
+          token,
+          activeBudgetId,
+          selectedDate,
+        ),
+        listActiveDebts(token, activeBudgetId, selectedDate),
+      ]);
       setTransactions(updatedTransactions);
+      setActiveDebts(updatedActiveDebts);
       await loadDailyStateData(token, activeBudgetId, selectedDate);
       await loadReports();
     } catch (error) {
@@ -1591,12 +1617,16 @@ export default function HomePage() {
       if (editingTransaction?.id === txId) {
         clearEditingTransaction();
       }
-      const updatedTransactions = await listTransactions(
-        token,
-        activeBudgetId,
-        selectedDate,
-      );
+      const [updatedTransactions, updatedActiveDebts] = await Promise.all([
+        listTransactions(
+          token,
+          activeBudgetId,
+          selectedDate,
+        ),
+        listActiveDebts(token, activeBudgetId, selectedDate),
+      ]);
       setTransactions(updatedTransactions);
+      setActiveDebts(updatedActiveDebts);
       await loadDailyStateData(token, activeBudgetId, selectedDate);
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось удалить операцию", error));
@@ -1692,12 +1722,16 @@ export default function HomePage() {
         loadDailyStateData(token, activeBudgetId, selectedDate),
       ]);
       setAccounts(updatedAccounts);
-      const updatedTransactions = await listTransactions(
-        token,
-        activeBudgetId,
-        selectedDate,
-      );
+      const [updatedTransactions, updatedActiveDebts] = await Promise.all([
+        listTransactions(
+          token,
+          activeBudgetId,
+          selectedDate,
+        ),
+        listActiveDebts(token, activeBudgetId, selectedDate),
+      ]);
       setTransactions(updatedTransactions);
+      setActiveDebts(updatedActiveDebts);
       if (reportFrom && reportTo && reportFrom <= reportTo) {
         const [balance, summary] = await Promise.all([
           getReportBalance(token, activeBudgetId, reportFrom, reportTo),
@@ -1949,6 +1983,7 @@ export default function HomePage() {
                 onReconcileAdjust={handleReconcileAdjust}
                 accounts={accounts}
                 transactions={transactions}
+                activeDebts={activeDebts}
                 goals={goals}
                 categories={categories}
                 dailyStateAccounts={dailyState?.accounts ?? []}
@@ -2051,6 +2086,7 @@ export default function HomePage() {
                 opsDate={opsDate}
                 onOpsDateChange={handleOpsDateChange}
                 transactions={transactions}
+                activeDebts={activeDebts}
                 selectedDate={selectedDate}
                 onSelectedDateChange={setSelectedDate}
                 accountMap={accountMap}
@@ -2564,6 +2600,7 @@ type DayTabProps = {
   onReconcileAdjust: () => void;
   accounts: Account[];
   transactions: Transaction[];
+  activeDebts: ActiveDebt[];
   goals: Goal[];
   categories: Category[];
   dailyStateAccounts: DailyStateAccount[];
@@ -2637,6 +2674,7 @@ const DayTab = ({
   onReconcileAdjust,
   accounts,
   transactions,
+  activeDebts,
   goals,
   categories,
   dailyStateAccounts,
@@ -2916,27 +2954,19 @@ const DayTab = ({
     </Card>
 
     <Card title="Долги (детально)">
-      {transactions.filter((tx) => tx.kind === "debt").length ? (
+      {activeDebts.length ? (
         <table className="mf-table">
           <thead>
-            <tr><th>Кредитор</th><th>Сумма</th><th>Операция</th><th>Действия</th></tr>
+            <tr><th>Кредитор</th><th>Сумма</th><th>Дата долга</th></tr>
           </thead>
           <tbody>
-            {transactions.filter((tx) => tx.kind === "debt").map((tx) => {
-              const metadata = parseDebtMetadata(tx.note);
-              const directionLabel = metadata?.direction === "repaid" ? "Вернул" : "Взял";
-              return (
-                <tr key={tx.id}>
-                  <td>{getDebtCreditor(metadata, tx.note)}</td>
-                  <td>{formatRub(tx.amount)}</td>
-                  <td>{directionLabel}</td>
-                  <td>
-                    <button type="button" className="mf-icon-btn" onClick={() => onEditDebtTransaction(tx)}>✏️</button>
-                    <button type="button" className="mf-icon-btn mf-icon-btn--danger" onClick={() => window.confirm("Удалить операцию?") && onDeleteTransaction(tx.id)}>🗑</button>
-                  </td>
-                </tr>
-              );
-            })}
+            {activeDebts.map((debt) => (
+              <tr key={`${debt.creditor}-${debt.debt_date}`}>
+                <td>{debt.creditor}</td>
+                <td>{formatRub(debt.amount)}</td>
+                <td>{formatShortRuDate(debt.debt_date)}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       ) : <p>Долгов нет</p>}
@@ -3015,6 +3045,7 @@ type OpsTabProps = {
   opsDate: string;
   onOpsDateChange: (value: string) => void;
   transactions: Transaction[];
+  activeDebts: ActiveDebt[];
   selectedDate: string;
   onSelectedDateChange: (value: string) => void;
   accountMap: Map<string, Account>;
