@@ -228,6 +228,13 @@ export type DailyState = {
   top_total: number;
 };
 
+export type ActiveDebt = {
+  creditor: string;
+  amount: number;
+  debt_date: string;
+  closed_at: string | null;
+};
+
 export type Goal = {
   id: string;
   budget_id: string;
@@ -514,6 +521,17 @@ export const listTransactions = async (
 ): Promise<Transaction[]> => {
   const query = new URLSearchParams({ budget_id: budgetId, date });
   return requestJson(`/transactions?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const listActiveDebts = async (
+  token: string,
+  budgetId: string,
+  date: string,
+): Promise<ActiveDebt[]> => {
+  const query = new URLSearchParams({ budget_id: budgetId, date });
+  return requestJson(`/transactions/debts-active?${query.toString()}`, {
     headers: authHeaders(token),
   });
 };

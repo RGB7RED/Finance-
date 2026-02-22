@@ -54,6 +54,7 @@ from app.repositories.rules import (
 from app.repositories.transactions import (
     create_transaction,
     delete_transaction,
+    list_active_debts_as_of,
     list_transactions,
 )
 from app.repositories.users import get_user_by_id, upsert_user
@@ -127,6 +128,13 @@ class TransactionOut(BaseModel):
     tag: Literal["one_time", "subscription"]
     note: str | None = None
     created_at: str
+
+
+class ActiveDebtOut(BaseModel):
+    creditor: str
+    amount: int
+    debt_date: dt.date
+    closed_at: dt.date | None = None
 
 
 class DailyStateAccount(BaseModel):
@@ -514,6 +522,15 @@ def get_transactions(
     current_user: dict = Depends(get_current_user),
 ) -> list[TransactionOut]:
     return list_transactions(current_user["sub"], budget_id, date.isoformat())
+
+
+@router.get("/transactions/debts-active")
+def get_active_debts(
+    budget_id: str,
+    date: dt.date,
+    current_user: dict = Depends(get_current_user),
+) -> list[ActiveDebtOut]:
+    return list_active_debts_as_of(current_user["sub"], budget_id, date)
 
 
 @router.post("/transactions")

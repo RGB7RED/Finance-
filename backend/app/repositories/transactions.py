@@ -85,6 +85,84 @@ def list_transactions(
     return response.data or []
 
 
+def _resolve_debt_creditor(note: str | None) -> str:
+    metadata = _parse_debt_metadata(note)
+    if metadata and isinstance(metadata.get("creditor"), str):
+        creditor = metadata["creditor"].strip()
+        if creditor:
+            return creditor
+    if note and note.strip():
+        return note.strip()
+    return "—"
+
+
+def list_active_debts_as_of(
+    user_id: str, budget_id: str, target_date: date
+) -> list[dict[str, Any]]:
+    _ensure_budget_access(user_id, budget_id)
+    client = get_supabase_client()
+    response = (
+        client.table("transactions")
+        .select("id, date, type, amount, note, created_at")
+        .eq("budget_id", budget_id)
+        .eq("user_id", user_id)
+        .eq("kind", "debt")
+        .lte("date", target_date.isoformat())
+        .order("date")
+        .order("created_at")
+        .execute()
+    )
+
+    states: dict[str, dict[str, Any]] = {}
+    for tx in response.data or []:
+        creditor = _resolve_debt_creditor(tx.get("note"))
+        state = states.setdefault(
+            creditor,
+            {
+                "creditor": creditor,
+                "amount": 0,
+                "debt_date": None,
+                "closed_at": None,
+            },
+        )
+        delta = int(tx.get("amount", 0))
+        if tx.get("type") == "expense":
+            delta = -delta
+
+        previous = int(state["amount"])
+        next_amount = previous + delta
+
+        tx_date = tx.get("date")
+        if previous <= 0 and next_amount > 0:
+            state["debt_date"] = tx_date
+            state["closed_at"] = None
+        if previous > 0 and next_amount <= 0:
+            state["closed_at"] = tx_date
+
+        state["amount"] = max(next_amount, 0)
+
+    active_debts = []
+    for state in states.values():
+        debt_date = state.get("debt_date")
+        if not debt_date:
+            continue
+        closed_at = state.get("closed_at")
+        if debt_date <= target_date.isoformat() and (
+            closed_at is None or closed_at > target_date.isoformat()
+        ):
+            active_debts.append(
+                {
+                    "creditor": state["creditor"],
+                    "amount": int(state["amount"]),
+                    "debt_date": debt_date,
+                    "closed_at": closed_at,
+                }
+            )
+
+    active_debts.sort(key=lambda item: (item["debt_date"], item["creditor"]))
+    return active_debts
+
+
 def _serialize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return jsonable_encoder(payload)
 
@@ -115,7 +193,12 @@ def _parse_debt_metadata(note: str | None) -> dict[str, Any] | None:
         return None
     if direction not in ("borrowed", "repaid"):
         return None
-    return {"debt_type": debt_type, "direction": direction}
+    creditor = data.get("creditor")
+    return {
+        "debt_type": debt_type,
+        "direction": direction,
+        "creditor": creditor if isinstance(creditor, str) else None,
+    }
 
 
 def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
