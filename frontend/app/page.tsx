@@ -98,9 +98,18 @@ type FormErrorDetails = {
 };
 
 type DebtMetadata = {
-  debt_type: "people" | "cards";
+  debt_type?: "people" | "cards";
   direction: "borrowed" | "repaid";
   note?: string | null;
+  creditor?: string | null;
+};
+
+const getDebtCreditor = (
+  debtMetadata: DebtMetadata | null,
+  fallbackNote: string | null,
+): string => {
+  const creditor = debtMetadata?.creditor ?? debtMetadata?.note ?? fallbackNote;
+  return creditor?.trim() || "—";
 };
 
 type EditingTransaction = {
@@ -195,7 +204,6 @@ const parseDebtMetadata = (note: string | null): DebtMetadata | null => {
     if (
       parsed &&
       typeof parsed === "object" &&
-      (parsed.debt_type === "people" || parsed.debt_type === "cards") &&
       (parsed.direction === "borrowed" || parsed.direction === "repaid")
     ) {
       return parsed;
@@ -293,11 +301,8 @@ export default function HomePage() {
   const [debtOtherDirection, setDebtOtherDirection] = useState<
     "borrowed" | "repaid"
   >("borrowed");
-  const [debtOtherType, setDebtOtherType] = useState<"people" | "cards">(
-    "people",
-  );
   const [debtOtherAccountId, setDebtOtherAccountId] = useState("");
-  const [debtOtherNote, setDebtOtherNote] = useState("");
+  const [debtOtherCreditor, setDebtOtherCreditor] = useState("");
   const [editingTransaction, setEditingTransaction] =
     useState<EditingTransaction | null>(null);
   const [dayModal, setDayModal] = useState<DayModal>(null);
@@ -618,9 +623,8 @@ export default function HomePage() {
     setAccountInitialAmount("0");
     setDebtOtherAmount("");
     setDebtOtherDirection("borrowed");
-    setDebtOtherType("people");
     setDebtOtherAccountId("");
-    setDebtOtherNote("");
+    setDebtOtherCreditor("");
     setGoalTitle("");
     setGoalTargetAmount("");
     setGoalDeadline("");
@@ -1120,6 +1124,8 @@ export default function HomePage() {
     setEditingAccount(null);
     setAccountName("");
     setAccountKind("cash");
+    setAccountActiveFrom(selectedDate);
+    setAccountInitialAmount("0");
     setDayModal("account-create");
   };
 
@@ -1294,9 +1300,8 @@ export default function HomePage() {
           debtMetadata?.direction ??
             (tx.type === "income" ? "borrowed" : "repaid"),
         );
-        setDebtOtherType(debtMetadata?.debt_type ?? "people");
-        setDebtOtherAccountId(tx.account_id ?? "");
-        setDebtOtherNote(debtMetadata?.note ?? "");
+                setDebtOtherAccountId(tx.account_id ?? "");
+        setDebtOtherCreditor(getDebtCreditor(debtMetadata, tx.note));
         return;
       }
       if (tx.type === "income") {
@@ -1325,8 +1330,7 @@ export default function HomePage() {
       setDebtOtherAccountId,
       setDebtOtherAmount,
       setDebtOtherDirection,
-      setDebtOtherNote,
-      setDebtOtherType,
+      setDebtOtherCreditor,
       setEditingTransaction,
       setExpenseAccountId,
       setExpenseAmount,
@@ -1610,7 +1614,7 @@ export default function HomePage() {
     setMessage("");
     setDebtOtherErrorDetails(null);
     const transactionDate = opsDate || selectedDate;
-    const trimmedDebtNote = debtOtherNote.trim();
+    const trimmedDebtNote = debtOtherCreditor.trim();
     try {
       if (
         editingTransaction &&
@@ -1626,13 +1630,13 @@ export default function HomePage() {
         budget_id: activeBudgetId,
         amount,
         direction: debtOtherDirection,
-        debt_type: debtOtherType,
+        debt_type: "people",
         account_id: debtOtherAccountId,
         note: trimmedDebtNote ? trimmedDebtNote : null,
         date: transactionDate,
       });
       setDebtOtherAmount("");
-      setDebtOtherNote("");
+      setDebtOtherCreditor("");
       clearEditingTransaction();
       const [updatedAccounts] = await Promise.all([
         listAccounts(token, activeBudgetId),
@@ -1899,6 +1903,10 @@ export default function HomePage() {
                 onAccountNameChange={setAccountName}
                 accountKind={accountKind}
                 onAccountKindChange={setAccountKind}
+                accountActiveFrom={accountActiveFrom}
+                onAccountActiveFromChange={setAccountActiveFrom}
+                accountInitialAmount={accountInitialAmount}
+                onAccountInitialAmountChange={setAccountInitialAmount}
                 onCreateAccount={handleCreateAccount}
                 onSaveAccount={handleEditAccountSave}
                 categoryName={categoryName}
@@ -1952,12 +1960,10 @@ export default function HomePage() {
                 onDebtOtherAmountChange={setDebtOtherAmount}
                 debtOtherDirection={debtOtherDirection}
                 onDebtOtherDirectionChange={setDebtOtherDirection}
-                debtOtherType={debtOtherType}
-                onDebtOtherTypeChange={setDebtOtherType}
                 debtOtherAccountId={debtOtherAccountId}
                 onDebtOtherAccountChange={setDebtOtherAccountId}
-                debtOtherNote={debtOtherNote}
-                onDebtOtherNoteChange={setDebtOtherNote}
+                debtOtherCreditor={debtOtherCreditor}
+                onDebtOtherCreditorChange={setDebtOtherCreditor}
                 onCreateDebtOther={handleCreateDebtOther}
                 debtOtherErrorDetails={debtOtherErrorDetails}
                 opsDate={opsDate}
@@ -2249,12 +2255,9 @@ const TransactionsGroupList = ({
                 "Счет";
               const isDebt = tx.kind === "debt";
               const debtMetadata = isDebt ? parseDebtMetadata(tx.note) : null;
-              const debtTypeLabel =
-                debtMetadata?.debt_type === "cards"
-                  ? "Кредитки"
-                  : "Людям";
               const debtDirectionLabel =
                 debtMetadata?.direction === "repaid" ? "Вернул" : "Взял в долг";
+              const debtCreditorLabel = getDebtCreditor(debtMetadata, tx.note);
               const categoryName =
                 (tx.category_id &&
                   categories.find((cat) => cat.id === tx.category_id)?.name) ||
@@ -2282,7 +2285,7 @@ const TransactionsGroupList = ({
                     ? "Разовый"
                     : "";
               const primaryLabel = isDebt
-                ? `Долг: ${debtTypeLabel}`
+                ? `Долг: ${debtCreditorLabel}`
                 : tx.type === "expense" && !isGoalTransfer
                   ? categoryName ?? "Без категории"
                   : tx.type === "transfer"
@@ -2297,7 +2300,7 @@ const TransactionsGroupList = ({
                     : tx.type === "expense"
                       ? "Расход"
                       : "Перевод";
-              const noteLabel = isDebt ? debtMetadata?.note ?? null : tx.note;
+              const noteLabel = isDebt ? debtCreditorLabel : tx.note;
 
               return (
                 <div key={tx.id} className="mf-transaction-row">
@@ -2333,8 +2336,8 @@ const TransactionsGroupList = ({
                             <span>{debtDirectionLabel}</span>
                           </div>
                           <div className="mf-transaction-details__row">
-                            <span className="mf-small">Тип долга</span>
-                            <span>{debtTypeLabel}</span>
+                            <span className="mf-small">Кредитор</span>
+                            <span>{debtCreditorLabel}</span>
                           </div>
                         </>
                       )}
@@ -2443,6 +2446,10 @@ type DayTabProps = {
   onAccountNameChange: (value: string) => void;
   accountKind: string;
   onAccountKindChange: (value: string) => void;
+  accountActiveFrom: string;
+  onAccountActiveFromChange: (value: string) => void;
+  accountInitialAmount: string;
+  onAccountInitialAmountChange: (value: string) => void;
   onCreateAccount: (event: FormEvent<HTMLFormElement>) => void;
   onSaveAccount: (event: FormEvent<HTMLFormElement>) => void;
   categoryName: string;
@@ -2493,6 +2500,10 @@ const DayTab = ({
   onAccountNameChange,
   accountKind,
   onAccountKindChange,
+  accountActiveFrom,
+  onAccountActiveFromChange,
+  accountInitialAmount,
+  onAccountInitialAmountChange,
   onCreateAccount,
   onSaveAccount,
   categoryName,
@@ -2626,6 +2637,17 @@ const DayTab = ({
         <p>Счета не добавлены</p>
       )}
       <Button variant="secondary" onClick={onCreateAccountClick}>➕ Создать счет</Button>
+      {(dayModal === "account-create" || dayModal === "account-edit") && (
+        <Card title={dayModal === "account-create" ? "Создать · Счет" : "Изменить · Счет"}>
+          <form className="mf-stack" onSubmit={dayModal === "account-create" ? onCreateAccount : onSaveAccount}>
+            <Input label="Название" type="text" value={accountName} onChange={(event) => onAccountNameChange(event.target.value)} required />
+            <label className="mf-input"><span className="mf-input__label">Тип</span><select className="mf-select" value={accountKind} onChange={(event) => onAccountKindChange(event.target.value)}><option value="cash">Наличные</option><option value="debit">Дебет</option><option value="savings">Накопительный</option><option value="credit">Кредитный</option></select></label>
+            <Input label="Дата создания" type="date" value={accountActiveFrom} onChange={(event) => onAccountActiveFromChange(event.target.value)} required />
+            <Input label="Начальный остаток" type="number" value={accountInitialAmount} onChange={(event) => onAccountInitialAmountChange(event.target.value)} required />
+            <div className="mf-row"><Button type="submit">Сохранить</Button><Button type="button" variant="secondary" onClick={onCloseModal}>Закрыть</Button></div>
+          </form>
+        </Card>
+      )}
     </Card>
 
     <Card title="Цели">
@@ -2678,63 +2700,32 @@ const DayTab = ({
         </table>
       ) : <p>Категории не добавлены</p>}
       <Button variant="secondary" onClick={onCreateCategoryClick}>➕ Создать категорию</Button>
+      {(dayModal === "category-create" || dayModal === "category-edit") && (
+        <Card title={dayModal === "category-create" ? "Создать · Категорию" : "Изменить · Категорию"}>
+          <form className="mf-stack" onSubmit={dayModal === "category-create" ? onCreateCategory : onSaveCategory}>
+            <Input label="Название" type="text" value={categoryName} onChange={(event) => onCategoryNameChange(event.target.value)} required />
+            <Input label="Родитель ID (опц.)" type="text" value={categoryParent} onChange={(event) => onCategoryParentChange(event.target.value)} />
+            <div className="mf-row"><Button type="submit">Сохранить</Button><Button type="button" variant="secondary" onClick={onCloseModal}>Закрыть</Button></div>
+          </form>
+        </Card>
+      )}
     </Card>
-
-    {dayModal === "account-create" && (
-      <Card title="Создать счет">
-        <form className="mf-stack" onSubmit={onCreateAccount}>
-          <Input label="Название" type="text" value={accountName} onChange={(event) => onAccountNameChange(event.target.value)} required />
-          <label className="mf-input"><span className="mf-input__label">Тип</span><select className="mf-select" value={accountKind} onChange={(event) => onAccountKindChange(event.target.value)}><option value="cash">Наличные</option><option value="debit">Дебет</option><option value="savings">Накопительный</option><option value="credit">Кредитный</option></select></label>
-          <div className="mf-row"><Button type="submit">Сохранить</Button><Button type="button" variant="secondary" onClick={onCloseModal}>Закрыть</Button></div>
-        </form>
-      </Card>
-    )}
-
-    {dayModal === "account-edit" && (
-      <Card title="Изменить счет">
-        <form className="mf-stack" onSubmit={onSaveAccount}>
-          <Input label="Название" type="text" value={accountName} onChange={(event) => onAccountNameChange(event.target.value)} required />
-          <label className="mf-input"><span className="mf-input__label">Тип</span><select className="mf-select" value={accountKind} onChange={(event) => onAccountKindChange(event.target.value)}><option value="cash">Наличные</option><option value="debit">Дебет</option><option value="savings">Накопительный</option><option value="credit">Кредитный</option></select></label>
-          <div className="mf-row"><Button type="submit">Сохранить</Button><Button type="button" variant="secondary" onClick={onCloseModal}>Закрыть</Button></div>
-        </form>
-      </Card>
-    )}
-
-    {dayModal === "category-create" && (
-      <Card title="Создать категорию">
-        <form className="mf-stack" onSubmit={onCreateCategory}>
-          <Input label="Название" type="text" value={categoryName} onChange={(event) => onCategoryNameChange(event.target.value)} required />
-          <Input label="Родитель ID (опц.)" type="text" value={categoryParent} onChange={(event) => onCategoryParentChange(event.target.value)} />
-          <div className="mf-row"><Button type="submit">Сохранить</Button><Button type="button" variant="secondary" onClick={onCloseModal}>Закрыть</Button></div>
-        </form>
-      </Card>
-    )}
-
-    {dayModal === "category-edit" && (
-      <Card title="Изменить категорию">
-        <form className="mf-stack" onSubmit={onSaveCategory}>
-          <Input label="Название" type="text" value={categoryName} onChange={(event) => onCategoryNameChange(event.target.value)} required />
-          <Input label="Родитель ID (опц.)" type="text" value={categoryParent} onChange={(event) => onCategoryParentChange(event.target.value)} />
-          <div className="mf-row"><Button type="submit">Сохранить</Button><Button type="button" variant="secondary" onClick={onCloseModal}>Закрыть</Button></div>
-        </form>
-      </Card>
-    )}
 
     <Card title="Долги (детально)">
       {transactions.filter((tx) => tx.kind === "debt").length ? (
         <table className="mf-table">
           <thead>
-            <tr><th>Кому должен</th><th>Сумма</th><th>Тип</th><th>Действия</th></tr>
+            <tr><th>Кредитор</th><th>Сумма</th><th>Операция</th><th>Действия</th></tr>
           </thead>
           <tbody>
             {transactions.filter((tx) => tx.kind === "debt").map((tx) => {
               const metadata = parseDebtMetadata(tx.note);
-              const typeLabel = metadata?.debt_type === "cards" ? "кредитка" : "человек";
+              const directionLabel = metadata?.direction === "repaid" ? "Вернул" : "Взял";
               return (
                 <tr key={tx.id}>
-                  <td>{tx.note ?? "—"}</td>
+                  <td>{getDebtCreditor(metadata, tx.note)}</td>
                   <td>{formatRub(tx.amount)}</td>
-                  <td>{typeLabel}</td>
+                  <td>{directionLabel}</td>
                   <td>
                     <button type="button" className="mf-icon-btn" onClick={() => onEditTransaction(tx)}>✏️</button>
                     <button type="button" className="mf-icon-btn" onClick={() => onDeleteTransaction(tx.id)}>🗑</button>
@@ -2745,7 +2736,6 @@ const DayTab = ({
           </tbody>
         </table>
       ) : <p>Долгов нет</p>}
-      <Button variant="secondary">➕ Создать долг</Button>
     </Card>
 
   </div>
@@ -2793,12 +2783,10 @@ type OpsTabProps = {
   onDebtOtherAmountChange: (value: string) => void;
   debtOtherDirection: "borrowed" | "repaid";
   onDebtOtherDirectionChange: (value: "borrowed" | "repaid") => void;
-  debtOtherType: "people" | "cards";
-  onDebtOtherTypeChange: (value: "people" | "cards") => void;
   debtOtherAccountId: string;
   onDebtOtherAccountChange: (value: string) => void;
-  debtOtherNote: string;
-  onDebtOtherNoteChange: (value: string) => void;
+  debtOtherCreditor: string;
+  onDebtOtherCreditorChange: (value: string) => void;
   onCreateDebtOther: (event: FormEvent<HTMLFormElement>) => void;
   debtOtherErrorDetails: FormErrorDetails | null;
   opsDate: string;
@@ -2859,12 +2847,11 @@ const OpsTab = ({
   onDebtOtherAmountChange,
   debtOtherDirection,
   onDebtOtherDirectionChange,
-  debtOtherType,
-  onDebtOtherTypeChange,
+  
   debtOtherAccountId,
   onDebtOtherAccountChange,
-  debtOtherNote,
-  onDebtOtherNoteChange,
+  debtOtherCreditor,
+  onDebtOtherCreditorChange,
   onCreateDebtOther,
   debtOtherErrorDetails,
   opsDate,
@@ -3143,6 +3130,71 @@ const OpsTab = ({
           <p>
             tx_response_text: {transferErrorDetails.responseText ?? "unknown"}
           </p>
+        </div>
+      )}
+    </Card>
+
+    <Card title="Создать · Долг">
+      {!hasAccounts && <p>Создайте хотя бы один счёт для учета долгов.</p>}
+      <form className="mf-stack" onSubmit={onCreateDebtOther}>
+        <OperationDateRow dateValue={opsDate} onDateChange={onOpsDateChange} />
+        <label className="mf-input">
+          <span className="mf-input__label">Счет</span>
+          <select
+            className="mf-select"
+            value={debtOtherAccountId}
+            onChange={(event) => onDebtOtherAccountChange(event.target.value)}
+            required
+            disabled={!hasAccounts}
+          >
+            <option value="">Выберите счет</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Input
+          label="Сумма"
+          type="number"
+          value={debtOtherAmount}
+          onChange={(event) => onDebtOtherAmountChange(event.target.value)}
+          required
+          disabled={!hasAccounts}
+        />
+        <label className="mf-input">
+          <span className="mf-input__label">Операция</span>
+          <select
+            className="mf-select"
+            value={debtOtherDirection}
+            onChange={(event) =>
+              onDebtOtherDirectionChange(
+                event.target.value as "borrowed" | "repaid",
+              )
+            }
+            disabled={!hasAccounts}
+          >
+            <option value="borrowed">Взял в долг</option>
+            <option value="repaid">Вернул долг</option>
+          </select>
+        </label>
+        <Input
+          label="Кредитор"
+          type="text"
+          value={debtOtherCreditor}
+          onChange={(event) => onDebtOtherCreditorChange(event.target.value)}
+          placeholder="У кого заняли или кому вернули"
+          disabled={!hasAccounts}
+        />
+        <Button type="submit" disabled={!hasAccounts}>
+          Добавить
+        </Button>
+      </form>
+      {debtOtherErrorDetails && (
+        <div>
+          <p>tx_http_status: {debtOtherErrorDetails.httpStatus ?? "unknown"}</p>
+          <p>tx_response_text: {debtOtherErrorDetails.responseText ?? "unknown"}</p>
         </div>
       )}
     </Card>
