@@ -41,6 +41,8 @@ import {
   createDebtOther,
   createGoal,
   createRule,
+  deleteAccount,
+  deleteCategory,
   createTransaction,
   deleteRule,
   deleteGoal,
@@ -65,6 +67,8 @@ import {
   listRules,
   listTransactions,
   resetAll,
+  updateAccount,
+  updateCategory,
   updateGoal,
 } from "../src/lib/api";
 import { clearToken, getToken, setToken } from "../src/lib/auth";
@@ -104,6 +108,13 @@ type EditingTransaction = {
   kind: Transaction["kind"];
   type: Transaction["type"];
 };
+
+type DayModal =
+  | null
+  | "account-create"
+  | "account-edit"
+  | "category-create"
+  | "category-edit";
 
 const buildErrorMessage = (fallback: string, error: unknown): string => {
   if (isUnauthorized(error)) {
@@ -289,6 +300,11 @@ export default function HomePage() {
   const [debtOtherNote, setDebtOtherNote] = useState("");
   const [editingTransaction, setEditingTransaction] =
     useState<EditingTransaction | null>(null);
+  const [dayModal, setDayModal] = useState<DayModal>(null);
+  const [editingAccount, setEditingAccount] = useState<Account | null>(null);
+  const [editingCategory, setEditingCategory] =
+    useState<Category | null>(null);
+  const [opsMode, setOpsMode] = useState<"create" | "edit">("create");
   const [goalAccountId, setGoalAccountId] = useState("");
   const [goalTitle, setGoalTitle] = useState("");
   const [goalTargetAmount, setGoalTargetAmount] = useState("");
@@ -701,6 +717,24 @@ export default function HomePage() {
     localStorage.setItem(storageKey, goalAccountId);
   }, [activeBudgetId, goalAccountId]);
 
+  const refreshData = useCallback(async () => {
+    if (!token || !activeBudgetId) {
+      return;
+    }
+    const [loadedAccounts, loadedCategories, loadedTransactions, loadedGoals] =
+      await Promise.all([
+        listAccounts(token, activeBudgetId),
+        listCategories(token, activeBudgetId),
+        listTransactions(token, activeBudgetId, selectedDate),
+        listGoals(token, activeBudgetId),
+      ]);
+    await loadDailyStateData(token, activeBudgetId, selectedDate);
+    setAccounts(loadedAccounts);
+    setCategories(loadedCategories);
+    setTransactions(loadedTransactions);
+    setGoals(loadedGoals);
+  }, [token, activeBudgetId, selectedDate]);
+
   const getTagLabel = (tag: "one_time" | "subscription" | null | undefined) =>
     tag === "subscription" ? "Подписка" : tag === "one_time" ? "Разовый" : "";
 
@@ -1082,6 +1116,33 @@ export default function HomePage() {
     }
   };
 
+  const handleCreateAccountFromDay = () => {
+    setEditingAccount(null);
+    setAccountName("");
+    setAccountKind("cash");
+    setDayModal("account-create");
+  };
+
+  const handleEditAccountFromDay = (account: Account) => {
+    setEditingAccount(account);
+    setAccountName(account.name);
+    setAccountKind(account.kind);
+    setDayModal("account-edit");
+  };
+
+  const handleDeleteAccountFromDay = async (accountId: string) => {
+    if (!token) {
+      return;
+    }
+    setMessage("");
+    try {
+      await deleteAccount(token, accountId);
+      await refreshData();
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось удалить счет", error));
+    }
+  };
+
   const handleCreateCategory = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!token || !activeBudgetId) {
@@ -1107,6 +1168,72 @@ export default function HomePage() {
         responseText: apiError.text,
       });
       setMessage(buildErrorMessage("Не удалось добавить категорию", error));
+    }
+  };
+
+  const handleEditAccountSave = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token || !editingAccount) {
+      return;
+    }
+    setMessage("");
+    try {
+      await updateAccount(token, editingAccount.id, {
+        name: accountName,
+        kind: accountKind,
+      });
+      setDayModal(null);
+      setEditingAccount(null);
+      setAccountName("");
+      await refreshData();
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось обновить счет", error));
+    }
+  };
+
+  const handleCreateCategoryFromDay = () => {
+    setEditingCategory(null);
+    setDayModal("category-create");
+  };
+
+  const handleEditCategoryFromDay = (category: Category) => {
+    setEditingCategory(category);
+    setCategoryName(category.name);
+    setCategoryParent(category.parent_id ?? "");
+    setDayModal("category-edit");
+  };
+
+  const handleDeleteCategoryFromDay = async (categoryId: string) => {
+    if (!token) {
+      return;
+    }
+    setMessage("");
+    try {
+      await deleteCategory(token, categoryId);
+      await refreshData();
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось удалить категорию", error));
+    }
+  };
+
+  const handleEditCategorySave = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token || !editingCategory) {
+      return;
+    }
+    setMessage("");
+    try {
+      await updateCategory(token, editingCategory.id, {
+        name: categoryName,
+        parent_id: categoryParent || null,
+      });
+      setDayModal(null);
+      setEditingCategory(null);
+      setCategoryName("");
+      setCategoryParent("");
+      await refreshData();
+    } catch (error) {
+      setMessage(buildErrorMessage("Не удалось обновить категорию", error));
     }
   };
 
@@ -1662,25 +1789,14 @@ export default function HomePage() {
     setMessage("");
     try {
       await resetAll(token);
-      const [
-        loadedAccounts,
-        loadedCategories,
-        loadedTransactions,
-        loadedGoals,
-        loadedRules,
-      ] = await Promise.all([
-        listAccounts(token, activeBudgetId),
-        listCategories(token, activeBudgetId),
-        listTransactions(token, activeBudgetId, selectedDate),
-        listGoals(token, activeBudgetId),
-        listRules(token, activeBudgetId),
-      ]);
-      await loadDailyStateData(token, activeBudgetId, selectedDate);
-      setAccounts(loadedAccounts);
-      setCategories(loadedCategories);
-      setTransactions(loadedTransactions);
-      setGoals(loadedGoals);
-      setRules(loadedRules);
+      setAccounts([]);
+      setCategories([]);
+      setTransactions([]);
+      setGoals([]);
+      setRules([]);
+      setDayModal(null);
+      await refreshData();
+      await loadRulesData(token, activeBudgetId);
       await loadReports();
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось выполнить общий сброс", error));
@@ -1771,6 +1887,26 @@ export default function HomePage() {
                 accountMap={accountMap}
                 onDeleteTransaction={handleDeleteTransaction}
                 onEditTransaction={handleEditTransaction}
+                dayModal={dayModal}
+                onCloseModal={() => setDayModal(null)}
+                onCreateAccountClick={handleCreateAccountFromDay}
+                onEditAccount={handleEditAccountFromDay}
+                onDeleteAccount={handleDeleteAccountFromDay}
+                onCreateCategoryClick={handleCreateCategoryFromDay}
+                onEditCategory={handleEditCategoryFromDay}
+                onDeleteCategory={handleDeleteCategoryFromDay}
+                accountName={accountName}
+                onAccountNameChange={setAccountName}
+                accountKind={accountKind}
+                onAccountKindChange={setAccountKind}
+                onCreateAccount={handleCreateAccount}
+                onSaveAccount={handleEditAccountSave}
+                categoryName={categoryName}
+                onCategoryNameChange={setCategoryName}
+                categoryParent={categoryParent}
+                onCategoryParentChange={setCategoryParent}
+                onCreateCategory={handleCreateCategory}
+                onSaveCategory={handleEditCategorySave}
               />
             )}
             {activeTab === "ops" && (
@@ -1836,6 +1972,8 @@ export default function HomePage() {
                 onEditTransaction={handleEditTransaction}
                 editingTransaction={editingTransaction}
                 onCancelEdit={clearEditingTransaction}
+                mode={opsMode}
+                onModeChange={setOpsMode}
               />
             )}
             {activeTab === "reports" && (
@@ -1955,6 +2093,7 @@ type TransactionsCardProps = {
   onEditTransaction: (tx: Transaction) => void;
 };
 
+
 const TransactionsCard = ({
   title,
   showSummary = false,
@@ -2040,6 +2179,7 @@ type TransactionsGroupListProps = {
   onDeleteTransaction: (txId: string) => void;
   onEditTransaction: (tx: Transaction) => void;
 };
+
 
 const TransactionsGroupList = ({
   transactions,
@@ -2291,6 +2431,26 @@ type DayTabProps = {
   accountMap: Map<string, Account>;
   onDeleteTransaction: (txId: string) => void;
   onEditTransaction: (tx: Transaction) => void;
+  dayModal: DayModal;
+  onCloseModal: () => void;
+  onCreateAccountClick: () => void;
+  onEditAccount: (account: Account) => void;
+  onDeleteAccount: (accountId: string) => void;
+  onCreateCategoryClick: () => void;
+  onEditCategory: (category: Category) => void;
+  onDeleteCategory: (categoryId: string) => void;
+  accountName: string;
+  onAccountNameChange: (value: string) => void;
+  accountKind: string;
+  onAccountKindChange: (value: string) => void;
+  onCreateAccount: (event: FormEvent<HTMLFormElement>) => void;
+  onSaveAccount: (event: FormEvent<HTMLFormElement>) => void;
+  categoryName: string;
+  onCategoryNameChange: (value: string) => void;
+  categoryParent: string;
+  onCategoryParentChange: (value: string) => void;
+  onCreateCategory: (event: FormEvent<HTMLFormElement>) => void;
+  onSaveCategory: (event: FormEvent<HTMLFormElement>) => void;
 };
 
 const DayTab = ({
@@ -2321,6 +2481,26 @@ const DayTab = ({
   accountMap,
   onDeleteTransaction,
   onEditTransaction,
+  dayModal,
+  onCloseModal,
+  onCreateAccountClick,
+  onEditAccount,
+  onDeleteAccount,
+  onCreateCategoryClick,
+  onEditCategory,
+  onDeleteCategory,
+  accountName,
+  onAccountNameChange,
+  accountKind,
+  onAccountKindChange,
+  onCreateAccount,
+  onSaveAccount,
+  categoryName,
+  onCategoryNameChange,
+  categoryParent,
+  onCategoryParentChange,
+  onCreateCategory,
+  onSaveCategory,
 }: DayTabProps) => (
   <div className="mf-stack">
     <div
@@ -2433,7 +2613,10 @@ const DayTab = ({
                   <td>{account.name}</td>
                   <td>{account.kind}</td>
                   <td>{formatRub(currentBalance)}</td>
-                  <td>✏️ 🗑</td>
+                  <td>
+                    <button type="button" className="mf-icon-btn" onClick={() => onEditAccount(account)}>✏️</button>
+                    <button type="button" className="mf-icon-btn" onClick={() => onDeleteAccount(account.id)}>🗑</button>
+                  </td>
                 </tr>
               );
             })}
@@ -2442,7 +2625,7 @@ const DayTab = ({
       ) : (
         <p>Счета не добавлены</p>
       )}
-      <Button variant="secondary">➕ Создать счет</Button>
+      <Button variant="secondary" onClick={onCreateAccountClick}>➕ Создать счет</Button>
     </Card>
 
     <Card title="Цели">
@@ -2456,7 +2639,7 @@ const DayTab = ({
               <tr key={goal.id}>
                 <td>{goal.title}</td>
                 <td>{goal.current_amount} / {goal.target_amount} ₽</td>
-                <td>✏️ 🗑</td>
+<td>✏️ 🗑</td>
               </tr>
             ))}
           </tbody>
@@ -2484,15 +2667,58 @@ const DayTab = ({
                   <td>{category.name}</td>
                   <td>{formatRub(totalIncome)}</td>
                   <td>{formatRub(totalExpense)}</td>
-                  <td>✏️ 🗑</td>
+                  <td>
+                    <button type="button" className="mf-icon-btn" onClick={() => onEditCategory(category)}>✏️</button>
+                    <button type="button" className="mf-icon-btn" onClick={() => onDeleteCategory(category.id)}>🗑</button>
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       ) : <p>Категории не добавлены</p>}
-      <Button variant="secondary">➕ Создать категорию</Button>
+      <Button variant="secondary" onClick={onCreateCategoryClick}>➕ Создать категорию</Button>
     </Card>
+
+    {dayModal === "account-create" && (
+      <Card title="Создать счет">
+        <form className="mf-stack" onSubmit={onCreateAccount}>
+          <Input label="Название" type="text" value={accountName} onChange={(event) => onAccountNameChange(event.target.value)} required />
+          <label className="mf-input"><span className="mf-input__label">Тип</span><select className="mf-select" value={accountKind} onChange={(event) => onAccountKindChange(event.target.value)}><option value="cash">Наличные</option><option value="debit">Дебет</option><option value="savings">Накопительный</option><option value="credit">Кредитный</option></select></label>
+          <div className="mf-row"><Button type="submit">Сохранить</Button><Button type="button" variant="secondary" onClick={onCloseModal}>Закрыть</Button></div>
+        </form>
+      </Card>
+    )}
+
+    {dayModal === "account-edit" && (
+      <Card title="Изменить счет">
+        <form className="mf-stack" onSubmit={onSaveAccount}>
+          <Input label="Название" type="text" value={accountName} onChange={(event) => onAccountNameChange(event.target.value)} required />
+          <label className="mf-input"><span className="mf-input__label">Тип</span><select className="mf-select" value={accountKind} onChange={(event) => onAccountKindChange(event.target.value)}><option value="cash">Наличные</option><option value="debit">Дебет</option><option value="savings">Накопительный</option><option value="credit">Кредитный</option></select></label>
+          <div className="mf-row"><Button type="submit">Сохранить</Button><Button type="button" variant="secondary" onClick={onCloseModal}>Закрыть</Button></div>
+        </form>
+      </Card>
+    )}
+
+    {dayModal === "category-create" && (
+      <Card title="Создать категорию">
+        <form className="mf-stack" onSubmit={onCreateCategory}>
+          <Input label="Название" type="text" value={categoryName} onChange={(event) => onCategoryNameChange(event.target.value)} required />
+          <Input label="Родитель ID (опц.)" type="text" value={categoryParent} onChange={(event) => onCategoryParentChange(event.target.value)} />
+          <div className="mf-row"><Button type="submit">Сохранить</Button><Button type="button" variant="secondary" onClick={onCloseModal}>Закрыть</Button></div>
+        </form>
+      </Card>
+    )}
+
+    {dayModal === "category-edit" && (
+      <Card title="Изменить категорию">
+        <form className="mf-stack" onSubmit={onSaveCategory}>
+          <Input label="Название" type="text" value={categoryName} onChange={(event) => onCategoryNameChange(event.target.value)} required />
+          <Input label="Родитель ID (опц.)" type="text" value={categoryParent} onChange={(event) => onCategoryParentChange(event.target.value)} />
+          <div className="mf-row"><Button type="submit">Сохранить</Button><Button type="button" variant="secondary" onClick={onCloseModal}>Закрыть</Button></div>
+        </form>
+      </Card>
+    )}
 
     <Card title="Долги (детально)">
       {transactions.filter((tx) => tx.kind === "debt").length ? (
@@ -2587,6 +2813,8 @@ type OpsTabProps = {
   onEditTransaction: (tx: Transaction) => void;
   editingTransaction: EditingTransaction | null;
   onCancelEdit: () => void;
+  mode: "create" | "edit";
+  onModeChange: (value: "create" | "edit") => void;
 };
 
 const OpsTab = ({
@@ -2651,9 +2879,16 @@ const OpsTab = ({
   onEditTransaction,
   editingTransaction,
   onCancelEdit,
+  mode,
+  onModeChange,
 }: OpsTabProps) => (
   <div className="mf-stack">
+    <div className="tabs mf-row">
+      <button type="button" className="mf-icon-btn" onClick={() => onModeChange("create")}>Создать</button>
+      <button type="button" className="mf-icon-btn" onClick={() => onModeChange("edit")}>Изменить</button>
+    </div>
     {editingTransaction && (
+
       <Card title="Редактирование операции">
         <div className="mf-row">
           <p className="mf-muted">Вы редактируете выбранную операцию.</p>
@@ -2663,6 +2898,8 @@ const OpsTab = ({
         </div>
       </Card>
     )}
+    {mode === "create" && (
+      <>
     <Card title="Создать · Доход">
       {!hasAccounts && (
         <p>Создайте хотя бы один счёт, чтобы добавлять операции.</p>
@@ -2910,8 +3147,12 @@ const OpsTab = ({
       )}
     </Card>
 
-    <TransactionsCard
-      title="Изменить · История операций"
+      </>
+    )}
+
+    {mode === "edit" && (
+      <TransactionsCard
+        title="Изменить · История операций"
       selectedDate={selectedDate}
       onSelectedDateChange={onSelectedDateChange}
       transactions={transactions}
@@ -2919,9 +3160,10 @@ const OpsTab = ({
       goals={goals}
       categories={categories}
       bottomDayTotal={bottomDayTotal}
-      onDeleteTransaction={onDeleteTransaction}
-      onEditTransaction={onEditTransaction}
-    />
+        onDeleteTransaction={onDeleteTransaction}
+        onEditTransaction={onEditTransaction}
+      />
+    )}
   </div>
 );
 
@@ -3357,8 +3599,7 @@ const SettingsTab = ({
       ) : (
         <p>Правил пока нет</p>
       )}
-      <div className="mf-row" style={{ justifyContent: "flex-end" }}><Button variant="danger" onClick={onResetAll}>Обнулить всё</Button></div>
-      <form className="mf-stack" onSubmit={onCreateRule}>
+            <form className="mf-stack" onSubmit={onCreateRule}>
         <Input
           label="Шаблон"
           type="text"
@@ -3413,6 +3654,11 @@ const SettingsTab = ({
         </label>
         <Button type="submit">Добавить правило</Button>
       </form>
+    </Card>
+    <Card title="Сброс данных">
+      <div className="mf-row" style={{ justifyContent: "flex-start" }}>
+        <Button variant="danger" onClick={onResetAll}>Обнулить всё</Button>
+      </div>
     </Card>
   </div>
 );
