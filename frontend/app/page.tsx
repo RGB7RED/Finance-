@@ -1867,7 +1867,7 @@ export default function HomePage() {
   return (
     <main>
       <div className="mf-container">
-        <h1>Мои финансы</h1>
+        <div className="mf-money-strip" aria-hidden="true" />
         <Card title="Статус">
           {status === "loading" && <p>Загрузка...</p>}
           {status === "unauthorized" && (
@@ -2226,8 +2226,8 @@ const OperationDateRow = ({
   return (
     <div className="mf-stack">
       <div className="mf-row mf-date-row">
-        <span className="mf-small">Дата:</span>
-        <span className="mf-date-row__value">
+        <span className="mf-date-row__label">Дата:</span>
+        <span className="mf-date-row__value mf-date-prominent">
           {formatShortRuDate(dateValue)}
         </span>
         <button
@@ -2365,7 +2365,7 @@ const TransactionsGroupList = ({
       {groupedTransactions.map((group) => (
         <div key={group.date} className="mf-transaction-group">
           <div className="mf-transaction-group__header">
-            <span>{formatShortRuDate(group.date)}</span>
+            <span className="mf-date-prominent">{formatShortRuDate(group.date)}</span>
             <span className="mf-transaction-group__total">
               Итог дня: {formatRub(group.total)}
             </span>
@@ -2691,7 +2691,7 @@ const DayTab = ({
         paddingBottom: "8px",
       }}
     >
-      <strong>Дата: {selectedDate}</strong>
+      <strong className="mf-date-prominent">Дата: {selectedDate}</strong>
       <Input
         type="date"
         value={selectedDate}
