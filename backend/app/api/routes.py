@@ -132,6 +132,7 @@ class TransactionOut(BaseModel):
 
 class ActiveDebtOut(BaseModel):
     creditor: str
+    creditor_name: str
     amount: int
     debt_date: dt.date
     closed_at: dt.date | None = None
