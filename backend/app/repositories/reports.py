@@ -391,6 +391,52 @@ def month_report(user_id: str, budget_id: str, month: str) -> dict[str, Any]:
     }
 
 
+def analytics_metric_by_day(
+    user_id: str,
+    budget_id: str,
+    metric: str,
+    days: int,
+) -> list[dict[str, Any]]:
+    _ensure_budget_access(user_id, budget_id)
+    if days <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Days must be greater than 0",
+        )
+
+    date_to = datetime.now(timezone.utc).date()
+    date_from = date_to - timedelta(days=days - 1)
+
+    if metric in {"balance", "remaining", "debts"}:
+        balance_rows = balance_by_day(user_id, budget_id, date_from, date_to)
+        if metric == "balance":
+            return [
+                {"date": item["date"], "value": int(item["balance"])}
+                for item in balance_rows
+            ]
+        if metric == "remaining":
+            return [
+                {"date": item["date"], "value": int(item["assets_total"])}
+                for item in balance_rows
+            ]
+        return [
+            {"date": item["date"], "value": int(item["debts_total"])}
+            for item in balance_rows
+        ]
+
+    if metric == "daily-total":
+        cashflow_rows = cashflow_by_day(user_id, budget_id, date_from, date_to)
+        return [
+            {"date": item["date"], "value": int(item["net_total"])}
+            for item in cashflow_rows
+        ]
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Unsupported analytics metric",
+    )
+
+
 def expenses_by_category(
     user_id: str,
     budget_id: str,

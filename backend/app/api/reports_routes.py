@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from app.auth.jwt import get_current_user
 from app.repositories.reports import (
+    analytics_metric_by_day,
     balance_by_day,
     balance_by_accounts,
     cashflow_by_day,
@@ -94,6 +95,11 @@ class ExpensesByCategoryReport(BaseModel):
     items: list[ExpensesByCategoryItem]
 
 
+class AnalyticsMetricDay(BaseModel):
+    date: date
+    value: int
+
+
 @router.get("/reports/cashflow")
 def get_reports_cashflow(
     budget_id: str,
@@ -154,3 +160,13 @@ def get_reports_expenses_by_category(
         to_date,
         limit,
     )
+
+
+@router.get("/analytics/{metric}")
+def get_analytics_metric(
+    metric: str,
+    budget_id: str,
+    days: int = Query(default=30, ge=1, le=365),
+    current_user: dict = Depends(get_current_user),
+) -> list[AnalyticsMetricDay]:
+    return analytics_metric_by_day(current_user["sub"], budget_id, metric, days)

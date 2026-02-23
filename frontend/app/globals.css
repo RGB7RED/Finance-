@@ -109,3 +109,8 @@ a:hover { color: var(--primary-2); }
 
 @keyframes mf-expand { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
 @keyframes mf-shimmer { 0%{background-position:0 0} 100%{background-position:200% 0} }
+
+.mf-card--interactive { cursor:pointer; transition: transform .15s ease, box-shadow .15s ease; }
+.mf-card--interactive:hover { transform: translateY(-1px); box-shadow:0 10px 26px rgba(1,5,16,.45); }
+.mf-link-button { font-size:12px; color:var(--text-muted); border:1px solid var(--border); border-radius:10px; padding:6px 10px; }
+.mf-analytics-chart { width:100%; height:240px; color:var(--primary-2); border:1px solid var(--border); border-radius:12px; padding:10px; background:color-mix(in srgb,var(--surface-2),transparent 18%); }
