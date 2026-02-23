@@ -2724,7 +2724,13 @@ const DayTab = ({
   debtOtherCreditor,
   onDebtOtherCreditorChange,
   onCreateDebtOther,
-}: DayTabProps) => (
+}: DayTabProps) => {
+  const [isAccountsOpen, setIsAccountsOpen] = useState(false);
+  const [isGoalsOpen, setIsGoalsOpen] = useState(false);
+  const [isCategoriesOpen, setIsCategoriesOpen] = useState(false);
+  const [isDebtsOpen, setIsDebtsOpen] = useState(false);
+
+  return (
   <div className="mf-stack">
     <div className="mf-row mf-date-row mf-date-row--sticky">
       <strong className="mf-date-prominent">📅 {formatShortRuDate(selectedDate)}</strong>
@@ -2750,7 +2756,7 @@ const DayTab = ({
     </div>
 
     <div className="mf-grid-2 mf-summary-grid">
-      <Card>
+      <Card className="mf-card--interactive" onClick={() => window.location.assign("/analytics/balance")}>
         <div className="mf-row" style={{ justifyContent: "space-between" }}>
           <div>
             <div className="mf-small">Баланс</div>
@@ -2760,7 +2766,7 @@ const DayTab = ({
           </div>
         </div>
       </Card>
-      <Card>
+      <Card className="mf-card--interactive" onClick={() => window.location.assign("/analytics/remaining")}>
         <div className="mf-row" style={{ justifyContent: "space-between" }}>
           <div>
             <div className="mf-small">Остаток</div>
@@ -2770,7 +2776,7 @@ const DayTab = ({
           </div>
         </div>
       </Card>
-      <Card>
+      <Card className="mf-card--interactive" onClick={() => window.location.assign("/analytics/debts")}>
         <div className="mf-row" style={{ justifyContent: "space-between" }}>
           <div>
             <div className="mf-small">Долги</div>
@@ -2780,7 +2786,7 @@ const DayTab = ({
           </div>
         </div>
       </Card>
-      <Card>
+      <Card className="mf-card--interactive" onClick={() => window.location.assign("/analytics/daily-total")}>
         <div className="mf-row" style={{ justifyContent: "space-between" }}>
           <div>
             <div className="mf-small">Итог дня</div>
@@ -2811,18 +2817,11 @@ const DayTab = ({
       </Card>
     </div>
 
-    <Card title="Операции за день">
-      <TransactionsGroupList
-        transactions={transactions}
-        accountMap={accountMap}
-        goals={goals}
-        categories={categories}
-        onDeleteTransaction={onDeleteTransaction}
-        onEditTransaction={onEditTransaction}
-      />
-    </Card>
+    <Button variant="secondary" onClick={() => setIsAccountsOpen((prev) => !prev)}>
+      {isAccountsOpen ? "Скрыть счета" : "Показать счета"}
+    </Button>
 
-    <Card title="Счета">
+    {isAccountsOpen && <Card title="Счета">
       {accounts.length ? (
         <table className="mf-table">
           <thead>
@@ -2868,9 +2867,13 @@ const DayTab = ({
           </form>
         </Card>
       )}
-    </Card>
+    </Card>}
 
-    <Card title="Цели">
+    <Button variant="secondary" onClick={() => setIsGoalsOpen((prev) => !prev)}>
+      {isGoalsOpen ? "Скрыть цели" : "Показать цели"}
+    </Button>
+
+    {isGoalsOpen && <Card title="Цели">
       {goals.length ? (
         <table className="mf-table">
           <thead>
@@ -2910,9 +2913,13 @@ const DayTab = ({
           </form>
         </Card>
       )}
-    </Card>
+    </Card>}
 
-    <Card title="Категории">
+    <Button variant="secondary" onClick={() => setIsCategoriesOpen((prev) => !prev)}>
+      {isCategoriesOpen ? "Скрыть категории" : "Показать категории"}
+    </Button>
+
+    {isCategoriesOpen && <Card title="Категории">
       {categories.length ? (
         <table className="mf-table">
           <thead>
@@ -2951,9 +2958,13 @@ const DayTab = ({
           </form>
         </Card>
       )}
-    </Card>
+    </Card>}
 
-    <Card title="Долги (детально)">
+    <Button variant="secondary" onClick={() => setIsDebtsOpen((prev) => !prev)}>
+      {isDebtsOpen ? "Скрыть долги" : "Показать долги"}
+    </Button>
+
+    {isDebtsOpen && <Card title="Долги (детально)">
       {activeDebts.length ? (
         <table className="mf-table">
           <thead>
@@ -2990,10 +3001,11 @@ const DayTab = ({
           onClose={onCloseModal}
         />
       )}
-    </Card>
+    </Card>}
 
   </div>
 );
+};
 
 type OpsTabProps = {
   hasAccounts: boolean;

@@ -320,6 +320,11 @@ export type ReconcileSummary = {
   is_ok: boolean;
 };
 
+export type AnalyticsMetricPoint = {
+  date: string;
+  value: number;
+};
+
 const authHeaders = (token: string) => ({
   Authorization: `Bearer ${token}`,
 });
@@ -962,6 +967,21 @@ export const getExpensesByCategoryReport = async (
     limit: String(limit),
   });
   return requestJson(`/reports/expenses-by-category?${query.toString()}`, {
+    headers: authHeaders(token),
+  });
+};
+
+export const getAnalyticsMetric = async (
+  token: string,
+  budgetId: string,
+  metric: "balance" | "remaining" | "debts" | "daily-total",
+  days: number,
+): Promise<AnalyticsMetricPoint[]> => {
+  const query = new URLSearchParams({
+    budget_id: budgetId,
+    days: String(days),
+  });
+  return requestJson(`/analytics/${metric}?${query.toString()}`, {
     headers: authHeaders(token),
   });
 };
