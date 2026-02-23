@@ -22,11 +22,24 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
 
         data = await request.json()
 
+        expected_secret = os.environ.get("TELEGRAM_SECRET")
         secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-        if secret != os.environ.get("TELEGRAM_SECRET"):
+        if expected_secret and secret != expected_secret:
+            logger.warning(
+                "Telegram webhook secret mismatch: header_present=%s expected_length=%s",
+                bool(secret),
+                len(expected_secret),
+            )
             return {"ok": True}
 
         update = Update.de_json(data, telegram_application.bot)
+
+        logger.info(
+            "Telegram update received: update_id=%s has_message=%s has_callback=%s",
+            getattr(update, "update_id", None),
+            bool(getattr(update, "message", None)),
+            bool(getattr(update, "callback_query", None)),
+        )
 
         await telegram_application.process_update(update)
 
