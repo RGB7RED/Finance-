@@ -50,19 +50,48 @@ def _ensure_account_in_budget(budget_id: str, account_id: str, label: str) -> No
         )
 
 
-def _ensure_category_in_budget(budget_id: str, category_id: str) -> None:
+def _get_category_by_id(category_id: str) -> dict[str, Any] | None:
     client = get_supabase_client()
     response = (
         client.table("categories")
-        .select("id")
+        .select("id, budget_id, type")
         .eq("id", category_id)
-        .eq("budget_id", budget_id)
+        .limit(1)
         .execute()
     )
-    if not response.data:
+    data = response.data or []
+    if not data:
+        return None
+    return data[0]
+
+
+def _ensure_category_matches_transaction(
+    budget_id: str, category_id: str | None, tx_type: str
+) -> None:
+    if not category_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Category is required",
+        )
+
+    category = _get_category_by_id(category_id)
+    if not category:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Category not found",
+        )
+
+    if category.get("budget_id") != budget_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Category not found for budget",
+        )
+
+    expected_type = "expense" if tx_type == "fee" else tx_type
+    if category.get("type") != expected_type:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Category type must match transaction type",
         )
 
 
@@ -277,13 +306,10 @@ def create_transaction(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
                 detail="to_account_id must be null for income/expense/fee",
             )
         _ensure_account_in_budget(budget_id, account_id, "account")
-        if tx_type == "income" and category_id is not None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Income cannot have a category",
+        if tx_type in ("income", "expense", "fee"):
+            _ensure_category_matches_transaction(
+                budget_id, category_id, tx_type
             )
-        if tx_type in ("expense", "fee") and category_id is not None:
-            _ensure_category_in_budget(budget_id, category_id)
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

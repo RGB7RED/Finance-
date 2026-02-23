@@ -86,6 +86,7 @@ class AccountCreateRequest(BaseModel):
 class CategoryCreateRequest(BaseModel):
     budget_id: str
     name: str
+    type: Literal["income", "expense"]
     parent_id: str | None = None
 
 
@@ -96,6 +97,7 @@ class AccountUpdateRequest(BaseModel):
 
 class CategoryUpdateRequest(BaseModel):
     name: str
+    type: Literal["income", "expense"]
     parent_id: str | None = None
 
 
@@ -107,7 +109,7 @@ class TransactionCreate(BaseModel):
     date: dt.date
     account_id: str | None = None
     to_account_id: str | None = None
-    category_id: str | None = None
+    category_id: str | None
     goal_id: str | None = None
     tag: Literal["one_time", "subscription"]
     note: str | None = None
@@ -492,7 +494,11 @@ def post_categories(
     payload: CategoryCreateRequest, current_user: dict = Depends(get_current_user)
 ) -> dict:
     return create_category(
-        current_user["sub"], payload.budget_id, payload.name, payload.parent_id
+        current_user["sub"],
+        payload.budget_id,
+        payload.name,
+        payload.type,
+        payload.parent_id,
     )
 
 
@@ -503,7 +509,11 @@ def patch_categories(
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     return update_category(
-        current_user["sub"], category_id, payload.name, payload.parent_id
+        current_user["sub"],
+        category_id,
+        payload.name,
+        payload.type,
+        payload.parent_id,
     )
 
 

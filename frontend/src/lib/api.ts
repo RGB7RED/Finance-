@@ -148,6 +148,7 @@ export type Category = {
   id: string;
   budget_id: string;
   name: string;
+  type: "income" | "expense";
   parent_id: string | null;
   created_at: string;
 };
@@ -472,7 +473,12 @@ export const listCategories = async (
 
 export const createCategory = async (
   token: string,
-  payload: { budget_id: string; name: string; parent_id?: string | null },
+  payload: {
+    budget_id: string;
+    name: string;
+    type: "income" | "expense";
+    parent_id?: string | null;
+  },
 ): Promise<Category> => {
   if (!API_BASE_URL) {
     throw buildError("API недоступен");
@@ -503,7 +509,11 @@ export const createCategory = async (
 export const updateCategory = async (
   token: string,
   categoryId: string,
-  payload: { name: string; parent_id?: string | null },
+  payload: {
+    name: string;
+    type: "income" | "expense";
+    parent_id?: string | null;
+  },
 ): Promise<Category> =>
   requestJson(`/categories/${categoryId}`, {
     method: "PATCH",
@@ -551,7 +561,7 @@ export const createTransaction = async (
     date: string;
     account_id?: string | null;
     to_account_id?: string | null;
-    category_id?: string | null;
+    category_id: string | null;
     tag: "one_time" | "subscription";
     note?: string | null;
   },
