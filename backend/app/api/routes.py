@@ -144,7 +144,7 @@ class DailyStateAccount(BaseModel):
     account_id: str
     name: str
     kind: Literal["cash", "bank"]
-    amount: int = Field(ge=0)
+    amount: int
 
 
 class DailyStateAccountUpdate(BaseModel):
