@@ -247,6 +247,7 @@ export default function HomePage() {
   const [accountInitialAmount, setAccountInitialAmount] = useState("0");
   const [categoryName, setCategoryName] = useState("");
   const [categoryParent, setCategoryParent] = useState("");
+  const [categoryType, setCategoryType] = useState<"income" | "expense">("expense");
   const [selectedDate, setSelectedDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
   );
@@ -1180,10 +1181,12 @@ export default function HomePage() {
       await createCategory(token, {
         budget_id: activeBudgetId,
         name: categoryName,
+        type: categoryType,
         parent_id: parentId,
       });
       setCategoryName("");
       setCategoryParent("");
+      setCategoryType("expense");
       const updatedCategories = await listCategories(token, activeBudgetId);
       setCategories(updatedCategories);
     } catch (error) {
@@ -1218,6 +1221,9 @@ export default function HomePage() {
 
   const handleCreateCategoryFromDay = () => {
     setEditingCategory(null);
+    setCategoryName("");
+    setCategoryParent("");
+    setCategoryType("expense");
     setDayModal("category-create");
   };
 
@@ -1241,6 +1247,7 @@ export default function HomePage() {
     setEditingCategory(category);
     setCategoryName(category.name);
     setCategoryParent(category.parent_id ?? "");
+    setCategoryType(category.type);
     setDayModal("category-edit");
   };
 
@@ -1266,12 +1273,14 @@ export default function HomePage() {
     try {
       await updateCategory(token, editingCategory.id, {
         name: categoryName,
+        type: categoryType,
         parent_id: categoryParent || null,
       });
       setDayModal(null);
       setEditingCategory(null);
       setCategoryName("");
       setCategoryParent("");
+      setCategoryType("expense");
       await refreshData();
     } catch (error) {
       setMessage(buildErrorMessage("Не удалось обновить категорию", error));
@@ -1492,7 +1501,10 @@ export default function HomePage() {
     }
     setMessage("");
     setExpenseErrorDetails(null);
-    const categoryId = expenseCategoryId ? expenseCategoryId : null;
+    if (!expenseCategoryId) {
+      setMessage("Выберите категорию расхода");
+      return;
+    }
     const transactionDate = opsDate || selectedDate;
     try {
       if (
@@ -1510,7 +1522,7 @@ export default function HomePage() {
         amount,
         date: transactionDate,
         account_id: expenseAccountId,
-        category_id: categoryId,
+        category_id: expenseCategoryId,
         tag: expenseTag,
         note: expenseNote ? expenseNote : null,
       });
@@ -1578,6 +1590,7 @@ export default function HomePage() {
         date: transactionDate,
         account_id: transferFromAccountId,
         to_account_id: transferToAccountId,
+        category_id: null,
         tag: "one_time",
         note: transferNote ? transferNote : null,
       });
@@ -2015,6 +2028,8 @@ export default function HomePage() {
                 onCategoryNameChange={setCategoryName}
                 categoryParent={categoryParent}
                 onCategoryParentChange={setCategoryParent}
+                categoryType={categoryType}
+                onCategoryTypeChange={setCategoryType}
                 onCreateCategory={handleCreateCategory}
                 onSaveCategory={handleEditCategorySave}
                 goalTitle={goalTitle}
@@ -2188,6 +2203,8 @@ export default function HomePage() {
                 onCategoryNameChange={setCategoryName}
                 categoryParent={categoryParent}
                 onCategoryParentChange={setCategoryParent}
+                categoryType={categoryType}
+                onCategoryTypeChange={setCategoryType}
                 categoryErrorDetails={categoryErrorDetails}
                 onResetAll={handleResetAll}
                 onLogout={handleLogout}
@@ -2632,6 +2649,8 @@ type DayTabProps = {
   onCategoryNameChange: (value: string) => void;
   categoryParent: string;
   onCategoryParentChange: (value: string) => void;
+  categoryType: "income" | "expense";
+  onCategoryTypeChange: (value: "income" | "expense") => void;
   onCreateCategory: (event: FormEvent<HTMLFormElement>) => void;
   onSaveCategory: (event: FormEvent<HTMLFormElement>) => void;
   goalTitle: string;
@@ -2706,6 +2725,8 @@ const DayTab = ({
   onCategoryNameChange,
   categoryParent,
   onCategoryParentChange,
+  categoryType,
+  onCategoryTypeChange,
   onCreateCategory,
   onSaveCategory,
   goalTitle,
@@ -2953,6 +2974,7 @@ const DayTab = ({
         <Card title={dayModal === "category-create" ? "Создать · Категорию" : "Изменить · Категорию"}>
           <form className="mf-stack" onSubmit={dayModal === "category-create" ? onCreateCategory : onSaveCategory}>
             <Input label="Название" type="text" value={categoryName} onChange={(event) => onCategoryNameChange(event.target.value)} required />
+            <label className="mf-input"><span className="mf-input__label">Тип</span><select className="mf-select" value={categoryType} onChange={(event) => onCategoryTypeChange(event.target.value as "income" | "expense")}><option value="expense">Расход</option><option value="income">Доход</option></select></label>
             <Input label="Родитель ID (опц.)" type="text" value={categoryParent} onChange={(event) => onCategoryParentChange(event.target.value)} />
             <div className="mf-row"><Button type="submit">Сохранить</Button><Button type="button" variant="secondary" onClick={onCloseModal}>Закрыть</Button></div>
           </form>
@@ -3133,7 +3155,11 @@ const OpsTab = ({
   onCancelEdit,
   mode,
   onModeChange,
-}: OpsTabProps) => (
+}: OpsTabProps) => {
+  const incomeCategories = categories.filter((category) => category.type === "income");
+  const expenseCategories = categories.filter((category) => category.type === "expense");
+
+  return (
   <div className="mf-stack">
     <div className="tabs mf-row mf-ops-switch">
       <button type="button" className="mf-button mf-button--primary mf-button--fab" onClick={() => onModeChange("create")}>Создать</button>
@@ -3176,7 +3202,7 @@ const OpsTab = ({
           <OperationDateRow dateValue={opsDate} onDateChange={onOpsDateChange} />
           <label className="mf-input"><span className="mf-input__label">Счет</span><select className="mf-select" value={incomeAccountId} onChange={(event) => onIncomeAccountChange(event.target.value)} required disabled={!hasAccounts}><option value="">Выберите счет</option>{accounts.map((account) => (<option key={account.id} value={account.id}>{account.name}</option>))}</select></label>
           <Input label="Сумма" type="number" value={incomeAmount} onChange={(event) => onIncomeAmountChange(event.target.value)} required disabled={!hasAccounts} />
-          <label className="mf-input"><span className="mf-input__label">Категория</span><select className="mf-select" value={incomeCategoryId} onChange={(event) => onIncomeCategoryChange(event.target.value)} required disabled={!hasAccounts}><option value="">Выберите категорию</option>{categories.map((category) => (<option key={category.id} value={category.id}>{category.name}</option>))}</select></label>
+          <label className="mf-input"><span className="mf-input__label">Категория</span><select className="mf-select" value={incomeCategoryId} onChange={(event) => onIncomeCategoryChange(event.target.value)} required disabled={!hasAccounts}><option value="">Выберите категорию</option>{incomeCategories.map((category) => (<option key={category.id} value={category.id}>{category.name}</option>))}</select></label>
           <Input label="Комментарий" type="text" value={incomeNote} onChange={(event) => onIncomeNoteChange(event.target.value)} disabled={!hasAccounts} />
           <div className="mf-row"><Button type="submit" disabled={!hasAccounts}>Сохранить изменения</Button><Button type="button" variant="secondary" onClick={onCancelEdit}>Отменить</Button></div>
         </form>
@@ -3190,7 +3216,7 @@ const OpsTab = ({
           <OperationDateRow dateValue={opsDate} onDateChange={onOpsDateChange} />
           <label className="mf-input"><span className="mf-input__label">Счет</span><select className="mf-select" value={expenseAccountId} onChange={(event) => onExpenseAccountChange(event.target.value)} required disabled={!hasAccounts}><option value="">Выберите счет</option>{accounts.map((account) => (<option key={account.id} value={account.id}>{account.name}</option>))}</select></label>
           <Input label="Сумма" type="number" value={expenseAmount} onChange={(event) => onExpenseAmountChange(event.target.value)} required disabled={!hasAccounts} />
-          <label className="mf-input"><span className="mf-input__label">Категория</span><select className="mf-select" value={expenseCategoryId} onChange={(event) => onExpenseCategoryChange(event.target.value)} disabled={!hasAccounts}><option value="">Без категории</option>{categories.map((category) => (<option key={category.id} value={category.id}>{category.name}</option>))}</select></label>
+          <label className="mf-input"><span className="mf-input__label">Категория</span><select className="mf-select" value={expenseCategoryId} onChange={(event) => onExpenseCategoryChange(event.target.value)} required disabled={!hasAccounts}><option value="">Выберите категорию</option>{expenseCategories.map((category) => (<option key={category.id} value={category.id}>{category.name}</option>))}</select></label>
           <Input label="Комментарий" type="text" value={expenseNote} onChange={(event) => onExpenseNoteChange(event.target.value)} disabled={!hasAccounts} />
           <div className="mf-row"><Button type="submit" disabled={!hasAccounts}>Сохранить изменения</Button><Button type="button" variant="secondary" onClick={onCancelEdit}>Отменить</Button></div>
         </form>
@@ -3257,7 +3283,7 @@ const OpsTab = ({
             disabled={!hasAccounts}
           >
             <option value="">Выберите категорию</option>
-            {categories.map((category) => (
+            {incomeCategories.map((category) => (
               <option key={category.id} value={category.id}>
                 {category.name}
               </option>
@@ -3341,10 +3367,11 @@ const OpsTab = ({
             className="mf-select"
             value={expenseCategoryId}
             onChange={(event) => onExpenseCategoryChange(event.target.value)}
+            required
             disabled={!hasAccounts}
           >
-            <option value="">Без категории</option>
-            {categories.map((category) => (
+            <option value="">Выберите категорию</option>
+            {expenseCategories.map((category) => (
               <option key={category.id} value={category.id}>
                 {category.name}
               </option>
@@ -3479,7 +3506,8 @@ const OpsTab = ({
       />
     )}
   </div>
-);
+  );
+};
 
 type ReportsTabProps = {
   viewMode: "day" | "month";
@@ -3853,6 +3881,8 @@ type SettingsTabProps = {
   onCategoryNameChange: (value: string) => void;
   categoryParent: string;
   onCategoryParentChange: (value: string) => void;
+  categoryType: "income" | "expense";
+  onCategoryTypeChange: (value: "income" | "expense") => void;
   categoryErrorDetails: FormErrorDetails | null;
   onResetAll: () => void;
   onLogout: () => void;

@@ -28,7 +28,7 @@ def list_categories(user_id: str, budget_id: str) -> list[dict[str, Any]]:
     client = get_supabase_client()
     response = (
         client.table("categories")
-        .select("id, budget_id, name, parent_id, created_at")
+        .select("id, budget_id, name, type, parent_id, created_at")
         .eq("budget_id", budget_id)
         .order("created_at")
         .execute()
@@ -37,7 +37,11 @@ def list_categories(user_id: str, budget_id: str) -> list[dict[str, Any]]:
 
 
 def create_category(
-    user_id: str, budget_id: str, name: str, parent_id: str | None = None
+    user_id: str,
+    budget_id: str,
+    name: str,
+    category_type: str,
+    parent_id: str | None = None,
 ) -> dict[str, Any]:
     _ensure_budget_access(user_id, budget_id)
     client = get_supabase_client()
@@ -47,6 +51,7 @@ def create_category(
             {
                 "budget_id": budget_id,
                 "name": name,
+                "type": category_type,
                 "parent_id": parent_id,
             }
         )
@@ -58,9 +63,10 @@ def create_category(
 
     fallback = (
         client.table("categories")
-        .select("id, budget_id, name, parent_id, created_at")
+        .select("id, budget_id, name, type, parent_id, created_at")
         .eq("budget_id", budget_id)
         .eq("name", name)
+        .eq("type", category_type)
     )
     if parent_id is None:
         fallback = fallback.is_("parent_id", "null")
@@ -79,6 +85,7 @@ def update_category(
     user_id: str,
     category_id: str,
     name: str,
+    category_type: str,
     parent_id: str | None = None,
 ) -> dict[str, Any]:
     client = get_supabase_client()
@@ -98,7 +105,7 @@ def update_category(
     _ensure_budget_access(user_id, data[0]["budget_id"])
     response = (
         client.table("categories")
-        .update({"name": name, "parent_id": parent_id})
+        .update({"name": name, "type": category_type, "parent_id": parent_id})
         .eq("id", category_id)
         .execute()
     )

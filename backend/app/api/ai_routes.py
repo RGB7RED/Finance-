@@ -1046,7 +1046,10 @@ def apply_statement_draft(
                 if name.lower() in category_map:
                     continue
                 created_category = create_category(
-                    current_user["sub"], draft["budget_id"], name
+                    current_user["sub"],
+                    draft["budget_id"],
+                    name,
+                    (item.get("type") or "expense").lower(),
                 )
                 created_category_ids.append(created_category["id"])
                 category_map[name.lower()] = created_category["id"]
@@ -1087,7 +1090,10 @@ def apply_statement_draft(
 
             if "прочее" not in category_map:
                 created_category = create_category(
-                    current_user["sub"], draft["budget_id"], "Прочее"
+                    current_user["sub"],
+                    draft["budget_id"],
+                    "Прочее",
+                    "expense",
                 )
                 created_category_ids.append(created_category["id"])
                 category_map["прочее"] = created_category["id"]
